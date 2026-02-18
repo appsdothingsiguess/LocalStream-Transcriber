@@ -4,6 +4,7 @@
 /whisper-bin/
 /transcriptions/
 /media/
+.cursor/
 # Logs
 logs
 *.log
@@ -39,3 +40,5 @@ transcriptions/*.txt
 transcriptions/*.txt
 uploads/*
 config.json
+_python_env/
+_pycache/
