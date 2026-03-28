@@ -1,8 +1,94 @@
-# MP3 Grabber & Auto-Transcription System
+# LocalStream – Private Lecture Transcriber
 
-## Overview
+This project’s GitHub repository is **[LocalStream-Transcriber](https://github.com/appsdothingsiguess/LocalStream-Transcriber)**. The same codebase is also known as **MP3 Grabber** (`mp3grabber` on npm) in older docs—one app, one repo.
 
-The MP3 Grabber is a comprehensive automated transcription system that captures audio/video files from local storage or web pages and transcribes them using **[faster-whisper](https://github.com/SYSTRAN/faster-whisper)** - a high-performance implementation of OpenAI's Whisper model with GPU acceleration support.
+## What is this?
+
+LocalStream turns lecture audio and video into **searchable text on your computer**—so you can skim, search, and study without rewatching whole recordings.
+
+## Why should I care as a student?
+
+If you are juggling deadlines, need captions or text to follow along, or you learn better from notes than from scrubbing through long replays, this helps you **turn lectures into notes you can actually search**.
+
+## Does this work with Canvas, Panopto, or YouTube?
+
+**Yes.** It is built for **Canvas**, **Panopto**, **Kaltura**, and **YouTube**-style lecture pages (plus similar sites). You can also transcribe **files you already saved** (MP3, MP4, etc.) from any source.
+
+## Is my data staying on my laptop?
+
+**Yes.** Transcription runs **entirely on your machine**. Your lecture audio is **not** sent to a cloud service for processing.
+
+### At a glance
+
+- Turn **Canvas / Panopto / Kaltura / YouTube** lectures into text.
+- Works with **logged-in** school streams (Canvas, etc.).
+- **100% local** – no audio sent to external servers.
+- **Faster on a gaming-style NVIDIA GPU** if you have one; **works fine on CPU** too (usually slower).
+
+### Who this is for
+
+**Stressed college and grad students** who want **private, searchable lecture notes**—without being developers.
+
+### What it does
+
+You either **put media files** in a folder and run the app, or use a **small Chrome add-on** plus a local helper so pages you are already signed into can be turned into transcripts. You open a simple page in your browser at **`http://localhost:8787`** to watch progress. Finished text files land in the **`transcriptions/`** folder.
+
+---
+
+## Quick Start for Students (Windows)
+
+You need two free runtimes installed once: **Node.js** and **Python**. If you do not have them yet:
+
+- **Node.js** (LTS): [https://nodejs.org/](https://nodejs.org/)
+- **Python** 3.10–3.12: [https://www.python.org/downloads/](https://www.python.org/downloads/) — on Windows, check **“Add python.exe to PATH”** during install.
+
+Then:
+
+1. **Get the project:** On GitHub, use **Code → Download ZIP**, then unzip the folder somewhere easy to find (for example `Documents\LocalStream-Transcriber`).
+2. **Open the folder** in File Explorer. Double-click **`START.bat`**.  
+   - If double-click does not work, open **Command Prompt** in that folder and type: `npm run setup` then press Enter.  
+   - The first run may take a while while it sets up helpers (including speech tools). That is normal.
+3. **Choose what you want:**
+   - **Option 1 – Transcribe files:** Put your audio or video files in the **`media/`** folder, then pick option **1** and follow the prompts. Good for files you already downloaded or recorded.
+   - **Option 2 – Browser + Canvas / Panopto / YouTube:** Pick option **2** to start the local helper. Then install the Chrome add-on (next step) and play your lecture in the browser while signed in.
+4. **Load the Chrome add-on (only for option 2):** In Chrome, go to `chrome://extensions/`, turn on **Developer mode**, click **Load unpacked**, and select the project’s **`extension/`** folder (the whole folder).
+5. **Watch progress:** In your browser, open **`http://localhost:8787`** to see status. **Finished transcripts** are saved under **`transcriptions/`** as `.txt` files with timestamps (like `[00:01.234]`) so you can match text to the recording.
+
+**No GPU?** That is okay. The app can use your **CPU**; it may take longer, but you get the same kind of output.
+
+**Privacy:** All transcription stays **on your laptop**; nothing is uploaded to the cloud for speech-to-text.
+
+---
+
+## Downloads & Releases
+
+This section describes a **simple GitHub Releases** approach—no fancy installer, just a **download-and-run** flow on top of what already exists (`START.bat`, `npm run setup`, `package.json` as `mp3grabber@1.0.0`).
+
+### What a “Windows release ZIP” should contain
+
+- **Full project source** as in the repo: `start.js`, `relay.js`, `transcribe.py`, `package.json`, `requirements.txt`, **`extension/`**, **`START.bat`**, empty or placeholder **`media/`** and **`transcriptions/`**, etc.
+- **Do not** ship a copied **`node_modules/`** folder from your machine (paths and binaries differ). The ZIP should instruct users to run setup so **`npm install`** runs on *their* PC.
+- **Optional:** A short **`INSTALL.txt`** in the ZIP: install Node + Python from the links above, unzip, double-click `START.bat`, choose option 1 or 2.
+
+Shipping **pre-filled `node_modules`** or a frozen Python env is possible for advanced maintainers but is **brittle** across Windows versions; the realistic default is **“ZIP + first-run `npm run setup`”**.
+
+### How a student uses a release (3–5 steps)
+
+1. On GitHub, open **Releases**, download the **latest Windows/source ZIP**.
+2. Unzip to a folder (for example `Documents\LocalStream-Transcriber`).
+3. Install **Node.js** and **Python** if prompted or if setup fails (links in **Quick Start for Students** above).
+4. Double-click **`START.bat`** (or run `npm run setup` in that folder).
+5. Choose **option 1** (files in `media/`) or **option 2** (Chrome extension + `http://localhost:8787`), then find transcripts in **`transcriptions/`**.
+
+### Maintainer note
+
+Tag releases (e.g. `v1.0.0`) and attach the ZIP built from a **clean `git archive` or GitHub’s ZIP** of that tag so what students download matches the tagged commit.
+
+---
+
+## Technical overview
+
+The app uses **[faster-whisper](https://github.com/SYSTRAN/faster-whisper)** (OpenAI Whisper, optimized) for speech-to-text, with optional NVIDIA GPU acceleration.
 
 **NEW in v0.4**: Network sniffing architecture for HLS/DASH stream support and authenticated content (Canvas, Kaltura, Panopto).
 
