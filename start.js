@@ -292,10 +292,12 @@ def timeout_handler(signum, frame):
 try:
     import numpy as np
     from faster_whisper import WhisperModel
+    from faster_whisper.utils import download_model
     
     # Try to load model on GPU - this will fail if CUDA libraries are missing
     print("DEBUG:Attempting to load model on CUDA...", flush=True)
-    model = WhisperModel("tiny", device="cuda", compute_type="float16")
+    resolved_model_path = download_model("tiny")
+    model = WhisperModel(resolved_model_path, device="cuda", compute_type="float16")
     print("DEBUG:Model loaded on CUDA successfully", flush=True)
     
     # Just loading the model is enough - if we get here, GPU works
@@ -305,6 +307,8 @@ try:
     print("GPU_AVAILABLE:true", flush=True)
     print("GPU_TESTED:true", flush=True)
     print("GPU_METHOD:model_loading", flush=True)
+    print("GPU_MODEL_SOURCE:Systran/faster-whisper-tiny", flush=True)
+    print(f"GPU_MODEL_PATH:{resolved_model_path}", flush=True)
     
 except ImportError as import_err:
     # Missing dependencies
@@ -359,10 +363,10 @@ except Exception as e:
       }
       
       const output = result.toString();
-      const lines = output.trim().split('\n');
+      const lines = output.replace(/\r/g, '').trim().split('\n');
       
       // Log all output for debugging
-      const debugLines = lines.filter(line => 
+      const debugLines = lines.filter(line =>
         line.includes('GPU_') || 
         line.includes('ERROR') || 
         line.includes('WARNING') ||
@@ -370,19 +374,34 @@ except Exception as e:
         line.includes('cuda')
       );
       if (debugLines.length > 0) {
-        log(`   Debug output: ${debugLines.join(' | ')}`, 'cyan');
+        const compactDebug = debugLines.map(line => line.trim()).filter(Boolean).join(' | ');
+        log(`   Debug output: ${compactDebug}`, 'cyan');
       }
       
       const gpuAvailable = lines.find(line => line.startsWith('GPU_AVAILABLE:'))?.split(':')[1]?.trim();
       const gpuTested = lines.find(line => line.startsWith('GPU_TESTED:'))?.split(':')[1]?.trim();
       const gpuMethod = lines.find(line => line.startsWith('GPU_METHOD:'))?.split(':').slice(1).join(':')?.trim();
+      const gpuModelSource = lines.find(line => line.startsWith('GPU_MODEL_SOURCE:'))?.split(':').slice(1).join(':')?.trim();
+      const gpuModelPath = lines.find(line => line.startsWith('GPU_MODEL_PATH:'))?.split(':').slice(1).join(':')?.trim();
       const gpuError = lines.find(line => line.startsWith('GPU_ERROR:'))?.split(':').slice(1).join(':')?.trim();
       const gpuFallback = lines.find(line => line.startsWith('GPU_FALLBACK:'))?.split(':').slice(1).join(':')?.trim();
       
       if (gpuAvailable === 'true' && gpuTested === 'true') {
         const method = gpuMethod ? ` (${gpuMethod})` : '';
         log(`✅ GPU test passed - CUDA acceleration confirmed${method}`, 'green');
-        return { available: true, type: 'GPU (CUDA) - Tested', color: 'green' };
+        if (gpuModelSource) {
+          log(`   GPU test model source: ${gpuModelSource}`, 'cyan');
+        }
+        if (gpuModelPath) {
+          log(`   GPU test model path: ${gpuModelPath}`, 'cyan');
+        }
+        return {
+          available: true,
+          type: 'GPU (CUDA) - Tested',
+          color: 'green',
+          modelSource: gpuModelSource || null,
+          modelPath: gpuModelPath || null
+        };
       } else if (gpuAvailable === 'false') {
         if (gpuError) {
           log(`⚠️  GPU test failed: ${gpuError.substring(0, 150)}`, 'yellow');
@@ -470,12 +489,24 @@ except Exception as e:
         } else {
           log('⚠️  GPU test failed (no error details)', 'yellow');
         }
-        return { available: false, type: 'CPU (GPU unavailable)', color: 'yellow' };
+        return {
+          available: false,
+          type: 'CPU (GPU unavailable)',
+          color: 'yellow',
+          modelSource: gpuModelSource || null,
+          modelPath: gpuModelPath || null
+        };
       } else {
         // No GPU_AVAILABLE line found - script might have crashed
         log('⚠️  GPU test unclear - script may have failed', 'yellow');
         log(`   Full output: ${output.substring(0, 300)}`, 'yellow');
-        return { available: false, type: 'CPU (GPU test unclear)', color: 'yellow' };
+        return {
+          available: false,
+          type: 'CPU (GPU test unclear)',
+          color: 'yellow',
+          modelSource: gpuModelSource || null,
+          modelPath: gpuModelPath || null
+        };
       }
     } catch (execError) {
       // If execution fails completely, show the error
@@ -484,7 +515,7 @@ except Exception as e:
       if (execError.stderr) {
         log(`   stderr: ${execError.stderr.toString().substring(0, 200)}`, 'yellow');
       }
-      return { available: false, type: 'CPU (GPU test error)', color: 'yellow' };
+      return { available: false, type: 'CPU (GPU test error)', color: 'yellow', modelSource: null, modelPath: null };
     } finally {
       // Clean up temporary file
       try {
@@ -495,7 +526,7 @@ except Exception as e:
     }
     
   } catch (error) {
-    return { available: false, type: 'CPU (GPU test error)', color: 'yellow' };
+    return { available: false, type: 'CPU (GPU test error)', color: 'yellow', modelSource: null, modelPath: null };
   }
 }
 
@@ -1108,6 +1139,7 @@ import json
 import time
 from datetime import datetime
 from faster_whisper import WhisperModel
+from faster_whisper.utils import download_model
 
 # Suppress warnings for cleaner output
 warnings.filterwarnings("ignore", category=UserWarning)
@@ -1123,12 +1155,25 @@ def transcribe_audio(audio_file, model_size="medium", use_gpu=True):
         
         print(f"STATUS:Initializing {device.upper()} processing...", flush=True)
         
+        # Resolve model to an actual local path/repo before loading so setup can
+        # display what was really loaded (not just configured size string).
+        resolved_model_path = model_size
+        resolved_model_id = model_size
+        if not os.path.isdir(model_size):
+            resolved_model_path = download_model(model_size)
+            path_parts = resolved_model_path.replace("\\\\", "/").split("/")
+            snapshots_idx = path_parts.index("snapshots") if "snapshots" in path_parts else -1
+            if snapshots_idx > 0:
+                resolved_model_id = path_parts[snapshots_idx - 1].replace("models--", "").replace("--", "/")
+        
         # Load model with timing
         print(f"STATUS:Loading Whisper model ({model_size})...", flush=True)
+        print(f"STATUS:Resolved model source: {resolved_model_id}", flush=True)
+        print(f"STATUS:Resolved model path: {resolved_model_path}", flush=True)
         print(f"STATUS:Checking cache (downloading if needed)...", flush=True)
         
         start_time = time.time()
-        model = WhisperModel(model_size, device=device, compute_type=compute_type)
+        model = WhisperModel(resolved_model_path, device=device, compute_type=compute_type)
         load_time = time.time() - start_time
         
         # Determine if it was cached based on load time
@@ -1172,6 +1217,8 @@ def transcribe_audio(audio_file, model_size="medium", use_gpu=True):
             "device": device,
             "compute_type": compute_type,
             "model_size": model_size,
+            "resolved_model_id": resolved_model_id,
+            "resolved_model_path": resolved_model_path,
             "segment_count": segment_count
         }
         
@@ -1182,7 +1229,9 @@ def transcribe_audio(audio_file, model_size="medium", use_gpu=True):
             "error": error_msg,
             "device": device,
             "compute_type": compute_type,
-            "model_size": model_size
+            "model_size": model_size,
+            "resolved_model_id": resolved_model_id if 'resolved_model_id' in locals() else model_size,
+            "resolved_model_path": resolved_model_path if 'resolved_model_path' in locals() else model_size
         }
 
 def check_gpu_availability():
@@ -1483,6 +1532,12 @@ async function transcribeFile() {
       log(`   Language: ${transcriptionResult.language} (${(transcriptionResult.language_probability * 100).toFixed(1)}% confidence)`, 'cyan');
       log(`   Device: ${transcriptionResult.device.toUpperCase()}`, transcriptionResult.device === 'cuda' ? 'green' : 'yellow');
       log(`   Model: ${transcriptionResult.model_size}`, 'cyan');
+      if (transcriptionResult.resolved_model_id) {
+        log(`   Actual Model Source: ${transcriptionResult.resolved_model_id}`, 'cyan');
+      }
+      if (transcriptionResult.resolved_model_path) {
+        log(`   Actual Model Path: ${transcriptionResult.resolved_model_path}`, 'cyan');
+      }
       log(`   Compute Type: ${transcriptionResult.compute_type}`, 'cyan');
       log(`   Segments Processed: ${transcriptionResult.segment_count || 'N/A'}`, 'cyan');
       log(`   Processing time: ${duration} seconds`, 'cyan');
@@ -1604,6 +1659,12 @@ async function main() {
   // Display GPU/CPU status
   const gpuStatus = prerequisitesResult.gpuStatus;
   log(`🎮 Processing Device: ${gpuStatus.type}`, gpuStatus.color);
+  if (gpuStatus.modelSource) {
+    log(`🧠 Setup model source: ${gpuStatus.modelSource}`, 'cyan');
+  }
+  if (gpuStatus.modelPath) {
+    log(`📁 Setup model path: ${gpuStatus.modelPath}`, 'cyan');
+  }
 
   // Main menu
   while (true) {

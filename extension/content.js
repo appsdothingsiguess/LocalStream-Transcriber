@@ -43,6 +43,24 @@ async function convertBlobToData(blobUrl) {
   }
 }
 
+function getMediaSourceUrl(mediaElement) {
+  if (!mediaElement) return '';
+
+  if (mediaElement.currentSrc) {
+    return mediaElement.currentSrc;
+  }
+  if (mediaElement.src) {
+    return mediaElement.src;
+  }
+
+  const sourceElement = mediaElement.querySelector('source[src]');
+  if (sourceElement && sourceElement.src) {
+    return sourceElement.src;
+  }
+
+  return '';
+}
+
 // Synchronous function for immediate execution
 async function findYouTubeAudioElementsSync() {
   console.log('MP3 Grabber: findYouTubeAudioElementsSync() executing');
@@ -55,12 +73,13 @@ async function findYouTubeAudioElementsSync() {
     console.log(`MP3 Grabber: Found ${videoElements.length} video elements`);
     
     for (const [index, video] of videoElements.entries()) {
-      if (video.src) {
-        console.log(`MP3 Grabber: Video element ${index + 1} src:`, video.src);
+      const mediaUrl = getMediaSourceUrl(video);
+      if (mediaUrl) {
+        console.log(`MP3 Grabber: Video element ${index + 1} src:`, mediaUrl);
         
-        if (video.src.startsWith('blob:')) {
+        if (mediaUrl.startsWith('blob:')) {
           // Convert blob URL to data immediately in content script
-          const blobData = await convertBlobToData(video.src);
+          const blobData = await convertBlobToData(mediaUrl);
           if (blobData) {
             audioData.push({
               type: 'blob',
@@ -72,7 +91,7 @@ async function findYouTubeAudioElementsSync() {
         } else {
           audioData.push({
             type: 'url',
-            url: video.src,
+            url: mediaUrl,
             element: 'video',
             index: index + 1
           });
@@ -142,6 +161,98 @@ async function findYouTubeAudioElementsSync() {
   
   console.log(`MP3 Grabber: findYouTubeAudioElementsSync found ${audioData.length} elements:`, audioData);
   return audioData;
+}
+
+function getVideoElementLabel(video, index) {
+  const idPart = video.id ? `#${video.id}` : '';
+  const classPart = video.className && typeof video.className === 'string'
+    ? `.${video.className.split(/\s+/).filter(Boolean).slice(0, 2).join('.')}`
+    : '';
+  const mediaUrl = getMediaSourceUrl(video);
+  const srcPart = mediaUrl ? mediaUrl.slice(0, 70) : '(no src)';
+  return `${index + 1}) ${video.tagName.toLowerCase()}${idPart}${classPart} - ${srcPart}`;
+}
+
+async function selectSingleVideoElement() {
+  const videos = Array.from(document.querySelectorAll('video')).filter(v => !!getMediaSourceUrl(v));
+  console.log(`MP3 Grabber: selectSingleVideoElement found ${videos.length} candidate videos`);
+
+  if (videos.length === 0) {
+    return { success: false, error: 'No video elements with a source were found on this page.' };
+  }
+
+  if (videos.length === 1) {
+    const selected = videos[0];
+    const selectedUrl = getMediaSourceUrl(selected);
+    if (selectedUrl.startsWith('blob:')) {
+      const blobData = await convertBlobToData(selectedUrl);
+      if (!blobData) {
+        return { success: false, error: 'Failed to read selected blob video.' };
+      }
+      return {
+        success: true,
+        selected: {
+          type: 'blob',
+          ...blobData,
+          element: 'video',
+          index: 1
+        }
+      };
+    }
+
+    return {
+      success: true,
+      selected: {
+        type: 'url',
+        url: selectedUrl,
+        element: 'video',
+        index: 1
+      }
+    };
+  }
+
+  const promptText = [
+    'MP3 Grabber: Select one video to transcribe by number:',
+    ...videos.map((video, index) => getVideoElementLabel(video, index))
+  ].join('\n');
+
+  const rawChoice = window.prompt(promptText, '1');
+  if (rawChoice === null) {
+    return { success: false, cancelled: true, error: 'Selection cancelled.' };
+  }
+
+  const choice = Number.parseInt(rawChoice, 10);
+  if (!Number.isFinite(choice) || choice < 1 || choice > videos.length) {
+    return { success: false, error: `Invalid selection "${rawChoice}". Pick a number from 1 to ${videos.length}.` };
+  }
+
+  const selected = videos[choice - 1];
+  const selectedUrl = getMediaSourceUrl(selected);
+  if (selectedUrl.startsWith('blob:')) {
+    const blobData = await convertBlobToData(selectedUrl);
+    if (!blobData) {
+      return { success: false, error: 'Failed to read selected blob video.' };
+    }
+    return {
+      success: true,
+      selected: {
+        type: 'blob',
+        ...blobData,
+        element: 'video',
+        index: choice
+      }
+    };
+  }
+
+  return {
+    success: true,
+    selected: {
+      type: 'url',
+      url: selectedUrl,
+      element: 'video',
+      index: choice
+    }
+  };
 }
 
 // Function to detect YouTube video/audio elements
@@ -448,6 +559,16 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     })();
     
     return true; // Keep message channel open
+  } else if (request.action === 'selectSingleVideo') {
+    (async () => {
+      try {
+        const selection = await selectSingleVideoElement();
+        sendResponse(selection);
+      } catch (error) {
+        sendResponse({ success: false, error: error.message || 'Failed selecting video.' });
+      }
+    })();
+    return true;
   } else {
     console.log('MP3 Grabber: Unknown action:', request.action);
     sendResponse({ error: 'Unknown action', success: false });

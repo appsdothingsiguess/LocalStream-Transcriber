@@ -3,7 +3,7 @@ import express from 'express';
 import { WebSocketServer } from 'ws';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { createWriteStream, unlink, existsSync, mkdirSync, writeFileSync, readdirSync, statSync } from 'fs';
+import { createWriteStream, unlink, existsSync, mkdirSync, writeFileSync, readdirSync, statSync, readFileSync } from 'fs';
 import { get } from 'https';
 import { execSync, spawn } from 'child_process';
 import { v4 as uuidv4 } from 'uuid';
@@ -552,28 +552,102 @@ function transcribe(file, forceCPU = false) {
             result = execSync(`${pythonCmd} "${PYTHON_SCRIPT}" "${file}"`, {
                 encoding: "utf8",
                 cwd: __dirname,
-                stdio: 'pipe', // Capture stderr too
-                env: pythonEnv
+                stdio: 'pipe',
+                env: pythonEnv,
+                maxBuffer: 50 * 1024 * 1024
             });
         } catch (execError) {
-            const errorOutput = (execError.stderr || execError.stdout || execError.message || '').toString();
+            const stdout = (execError.stdout || '').toString();
+            const stderr = (execError.stderr || '').toString();
             const status = execError.status != null ? execError.status : execError.code;
-            // Windows exit 3221225477 = 0xC0000005 = ACCESS_VIOLATION (often wrong Python or crash during model load)
-            const isAccessViolation = status === 3221225477;
-            const isCudaError = errorOutput.includes('cudnn') || 
-                               errorOutput.includes('cublas') || 
-                               errorOutput.includes('cudnn_ops64_9.dll') ||
-                               errorOutput.includes('cublas64_12.dll') ||
-                               errorOutput.includes('Invalid handle') ||
-                               status === 3221226505; // Windows DLL error
-            
+            const isAccessViolation = status === 3221225477;  // 0xC0000005
+            const isShutdownCrash = status === 3221226505;    // 0xC0000409
+            const hasResultSuccess = stdout.includes('RESULT:SUCCESS');
+            const hasTranscriptionComplete = stdout.includes('STATUS:Transcription complete!');
+            const isCudaError = stderr.includes('cudnn') || 
+                               stderr.includes('cublas') || 
+                               stderr.includes('cudnn_ops64_9.dll') ||
+                               stderr.includes('cublas64_12.dll') ||
+                               stderr.includes('Invalid handle') ||
+                               (isShutdownCrash && !hasTranscriptionComplete);
+
+            // --- Recovery layer 1: extract RESULT_JSON from stdout ---
+            // Python emits RESULT_JSON:{...} to stdout right after the last
+            // segment.  stdout is captured by execSync even when the process
+            // crashes, making this the most reliable recovery path.
+            const rjPrefix = 'RESULT_JSON:';
+            const rjIdx = stdout.indexOf(rjPrefix);
+            if (rjIdx !== -1) {
+                const jsonStart = rjIdx + rjPrefix.length;
+                let lineEnd = stdout.indexOf('\n', jsonStart);
+                if (lineEnd === -1) lineEnd = stdout.length;
+                try {
+                    const jsonResult = JSON.parse(stdout.substring(jsonStart, lineEnd).replace(/\r$/, ''));
+                    if (jsonResult.success && jsonResult.transcript) {
+                        const resultPath = path.join(path.dirname(file), path.basename(file, path.extname(file)) + '.transcribe_result.json');
+                        if (existsSync(resultPath)) unlink(resultPath, () => {});
+                        try {
+                            const baseName = path.basename(file, path.extname(file));
+                            const transcriptFile = path.join(TRANSCRIPTIONS_DIR, `${baseName}.txt`);
+                            if (!existsSync(transcriptFile)) {
+                                const hdr = `Transcription Results\nRecovered after process crash\nSource: ${path.basename(file)}\nDevice: ${(jsonResult.device || 'unknown').toUpperCase()}\nModel: ${jsonResult.model_size || 'unknown'}\nLanguage: ${jsonResult.language || 'unknown'}\n\n--- TRANSCRIPTION ---\n`;
+                                writeFileSync(transcriptFile, hdr + jsonResult.transcript);
+                                console.log(`📄 Transcript saved (stdout recovery): ${transcriptFile}`);
+                            }
+                        } catch (saveErr) {
+                            console.error(`⚠️  Failed to save transcript file: ${saveErr.message}`);
+                        }
+                        const device = jsonResult.device || 'unknown';
+                        const deviceIcon = (device + '').toUpperCase() === 'CUDA' ? '🎮' : '💻';
+                        console.log(`✅ Transcription complete! (recovered from stdout) ${deviceIcon} Used: ${(device + '').toUpperCase()}`);
+                        return jsonResult.transcript;
+                    }
+                } catch (parseErr) {
+                    console.error(`⚠️  RESULT_JSON in stdout but parse failed: ${parseErr.message}`);
+                }
+            }
+
+            // --- Recovery layer 2: sidecar file on disk ---
+            const resultPath = path.join(path.dirname(file), path.basename(file, path.extname(file)) + '.transcribe_result.json');
+            if (hasResultSuccess || (isShutdownCrash && hasTranscriptionComplete)) {
+                if (existsSync(resultPath)) {
+                    try {
+                        const jsonStr = readFileSync(resultPath, 'utf8');
+                        const jsonResult = JSON.parse(jsonStr);
+                        if (jsonResult.success && jsonResult.transcript) {
+                            unlink(resultPath, () => {});
+                            try {
+                                const baseName = path.basename(file, path.extname(file));
+                                const transcriptFile = path.join(TRANSCRIPTIONS_DIR, `${baseName}.txt`);
+                                if (!existsSync(transcriptFile)) {
+                                    const hdr = `Transcription Results\nRecovered after process crash\nSource: ${path.basename(file)}\nDevice: ${(jsonResult.device || 'unknown').toUpperCase()}\nModel: ${jsonResult.model_size || 'unknown'}\nLanguage: ${jsonResult.language || 'unknown'}\n\n--- TRANSCRIPTION ---\n`;
+                                    writeFileSync(transcriptFile, hdr + jsonResult.transcript);
+                                    console.log(`📄 Transcript saved (sidecar recovery): ${transcriptFile}`);
+                                }
+                            } catch (saveErr) {
+                                console.error(`⚠️  Failed to save transcript file: ${saveErr.message}`);
+                            }
+                            const device = jsonResult.device || 'unknown';
+                            const deviceIcon = (device + '').toUpperCase() === 'CUDA' ? '🎮' : '💻';
+                            console.log(`✅ Transcription complete! (recovered from sidecar) ${deviceIcon} Used: ${(device + '').toUpperCase()}`);
+                            return jsonResult.transcript;
+                        }
+                        console.error(`⚠️  Sidecar found but result invalid (success=${jsonResult.success})`);
+                    } catch (sidecarErr) {
+                        console.error(`⚠️  Sidecar recovery failed: ${sidecarErr.message}`);
+                    }
+                } else {
+                    console.error(`⚠️  Process crashed after transcription but sidecar not found: ${resultPath}`);
+                }
+            }
+
             if (isAccessViolation && !forceCPU) {
                 console.error(`⚠️  Transcription process crashed (access violation). Often caused by using a different Python than setup.`);
                 console.log(`💡 Retrying with CPU mode...`);
                 return transcribe(file, true);
             }
             if (isCudaError && !forceCPU) {
-                console.error(`⚠️  CUDA error detected: ${errorOutput.substring(0, 200)}`);
+                console.error(`⚠️  CUDA error detected: ${(stderr || stdout).substring(0, 200)}`);
                 console.log(`💡 Retrying with CPU mode...`);
                 return transcribe(file, true);
             }
@@ -584,6 +658,7 @@ function transcribe(file, forceCPU = false) {
                 console.error(`   2) Run transcribe.py directly to test: python transcribe.py "<path-to-audio>"`);
                 console.error(`   3) Try: pip install faster-whisper==1.0.3 (older version sometimes avoids the crash)`);
             }
+            console.error(`❌ [TRANSCRIBE] Python exited with status ${status}${stderr ? ' | stderr: ' + stderr.substring(0, 300) : ''}`);
             throw execError;
         }
         
@@ -623,6 +698,8 @@ function transcribe(file, forceCPU = false) {
         }
         
         if (jsonResult.success) {
+            const sidecarPath = path.join(path.dirname(file), path.basename(file, path.extname(file)) + '.transcribe_result.json');
+            if (existsSync(sidecarPath)) unlink(sidecarPath, () => {});
             const device = jsonResult.device || deviceUsed;
             const deviceIcon = device.toUpperCase() === 'CUDA' ? '🎮' : '💻';
             console.log(`✅ Transcription complete! ${deviceIcon} Used: ${device.toUpperCase()}`);

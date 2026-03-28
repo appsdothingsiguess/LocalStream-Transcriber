@@ -40,3 +40,48 @@ document.getElementById('manualTrigger').addEventListener('click', () => {
     window.close();
   });
 });
+
+document.getElementById('queueSingle').addEventListener('click', async () => {
+  const statusDiv = document.getElementById('status');
+  statusDiv.className = '';
+  statusDiv.textContent = 'Select one video in the page prompt...';
+  statusDiv.style.display = 'block';
+
+  try {
+    const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+    const tab = tabs && tabs[0];
+
+    if (!tab || !tab.id) {
+      statusDiv.className = 'error';
+      statusDiv.textContent = 'No active tab found.';
+      return;
+    }
+
+    chrome.runtime.sendMessage({
+      action: 'queueSingleVideo',
+      tabId: tab.id
+    }, (response) => {
+      if (chrome.runtime.lastError) {
+        statusDiv.className = 'error';
+        statusDiv.textContent = 'Error: ' + chrome.runtime.lastError.message;
+        return;
+      }
+
+      if (response && response.success) {
+        statusDiv.className = 'success';
+        if (response.mode === 'fallback-stream') {
+          statusDiv.textContent = '✓ Queued latest detected stream';
+        } else {
+          statusDiv.textContent = '✓ Queued selected video';
+        }
+        setTimeout(() => window.close(), 1500);
+      } else {
+        statusDiv.className = 'error';
+        statusDiv.textContent = response?.error || 'Failed to queue selected video';
+      }
+    });
+  } catch (error) {
+    statusDiv.className = 'error';
+    statusDiv.textContent = 'Error: ' + error.message;
+  }
+});

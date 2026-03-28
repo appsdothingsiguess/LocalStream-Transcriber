@@ -39,6 +39,10 @@ node_modules
 transcriptions/*.txt
 transcriptions/*.txt
 uploads/*
+*.transcribe_result.json
 config.json
 _python_env/
-_pycache/
+__pycache__/
+*.pyc
+exlogs.txt
+termlogs.txt

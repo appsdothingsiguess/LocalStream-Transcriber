@@ -292,6 +292,88 @@ async function sendStreamToRelay(streamId, url, cookies, details) {
   }
 }
 
+async function queueSingleAudioItem(activeSocket, audioItem, tab) {
+  if (!audioItem) {
+    return { queued: false, reason: 'No media selected.' };
+  }
+
+  if (audioItem.type === 'blob' && audioItem.data) {
+    if (activeSocket.readyState !== WebSocket.OPEN) {
+      return { queued: false, reason: 'WebSocket not connected' };
+    }
+
+    activeSocket.send(JSON.stringify({
+      type: 'blob',
+      data: audioItem.data,
+      mimeType: audioItem.mimeType,
+      size: audioItem.size,
+      originalUrl: audioItem.originalUrl || 'blob:',
+      source: 'manual-select',
+      pageUrl: tab.url || 'unknown',
+      timestamp: Date.now()
+    }));
+    return { queued: true };
+  }
+
+  if (audioItem.type === 'url' && audioItem.url) {
+    const url = audioItem.url;
+    const urlLower = url.toLowerCase();
+
+    if (urlLower.includes('.m3u8') || urlLower.endsWith('.mpd')) {
+      const cookies = await chrome.cookies.getAll({ url });
+      // Manual selection should bypass quality/dedup filters and enqueue immediately.
+      const streamId = extractStreamId(url);
+      await sendStreamToRelay(streamId, url, cookies, {
+        tabId: tab.id,
+        initiator: tab.url || 'unknown',
+        source: 'manual-select'
+      });
+      return { queued: true };
+    }
+
+    if (activeSocket.readyState !== WebSocket.OPEN) {
+      return { queued: false, reason: 'WebSocket not connected' };
+    }
+
+    activeSocket.send(JSON.stringify({
+      type: 'url',
+      url,
+      source: 'manual-select',
+      pageUrl: tab.url || 'unknown',
+      timestamp: Date.now()
+    }));
+    return { queued: true };
+  }
+
+  return { queued: false, reason: 'Unsupported media type returned by content script.' };
+}
+
+function getMostRecentCapturedStream() {
+  const pendingEntries = Array.from(pendingStreams.entries()).map(([streamId, pending]) => ({
+    streamId,
+    url: pending.url,
+    cookies: pending.cookies || [],
+    details: pending.details || {},
+    timestamp: Date.now(),
+    source: 'pending'
+  }));
+
+  const processedEntries = Array.from(processedBaseUrls.entries()).map(([streamId, data]) => ({
+    streamId,
+    url: data.url,
+    cookies: [],
+    details: {},
+    timestamp: data.timestamp || 0,
+    source: 'processed'
+  }));
+
+  const candidates = [...pendingEntries, ...processedEntries]
+    .filter(item => !!item.url)
+    .sort((a, b) => b.timestamp - a.timestamp);
+
+  return candidates[0] || null;
+}
+
 // Clean up old entries periodically
 setInterval(() => {
   const now = Date.now();
@@ -664,5 +746,89 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       }
     });
     sendResponse({ success: true });
+  }
+
+  if (request.action === 'queueSingleVideo') {
+    (async () => {
+      try {
+        const activeSocket = await connect();
+        if (activeSocket.readyState !== WebSocket.OPEN) {
+          sendResponse({ success: false, error: 'WebSocket not connected' });
+          return;
+        }
+
+        // Clear relay-side deduplication so re-selecting a previously completed stream still queues.
+        activeSocket.send(JSON.stringify({
+          type: 'clear_completed',
+          timestamp: Date.now()
+        }));
+        await new Promise(resolve => setTimeout(resolve, 100));
+
+        let response;
+        try {
+          response = await chrome.tabs.sendMessage(request.tabId, {
+            action: 'selectSingleVideo',
+            timestamp: Date.now()
+          });
+        } catch (sendError) {
+          if (sendError.message.includes('Could not establish connection')) {
+            await chrome.scripting.executeScript({
+              target: { tabId: request.tabId },
+              files: ['content.js']
+            });
+            await new Promise(resolve => setTimeout(resolve, 500));
+            response = await chrome.tabs.sendMessage(request.tabId, {
+              action: 'selectSingleVideo',
+              timestamp: Date.now()
+            });
+          } else {
+            throw sendError;
+          }
+        }
+
+        const tab = await chrome.tabs.get(request.tabId);
+        if (response && response.success && response.selected) {
+          const queueResult = await queueSingleAudioItem(activeSocket, response.selected, tab);
+          if (!queueResult.queued) {
+            sendResponse({ success: false, error: queueResult.reason || 'Failed to queue selected video.' });
+            return;
+          }
+
+          sendResponse({ success: true, count: 1, mode: 'selected-video' });
+          return;
+        }
+
+        // Fallback: if Canvas does not expose a selectable <video src/currentSrc>,
+        // queue the most recent captured stream from network sniffer state.
+        const fallbackStream = getMostRecentCapturedStream();
+        if (!fallbackStream) {
+          sendResponse({
+            success: false,
+            error: response?.error || 'No streams detected yet. Play the video for a few seconds and try again.'
+          });
+          return;
+        }
+
+        await sendStreamToRelay(
+          fallbackStream.streamId,
+          fallbackStream.url,
+          fallbackStream.cookies || [],
+          {
+            ...fallbackStream.details,
+            tabId: tab.id,
+            initiator: tab.url || 'unknown',
+            source: 'manual-select-fallback',
+            fallbackSource: fallbackStream.source
+          }
+        );
+
+        sendResponse({ success: true, count: 1, mode: 'fallback-stream' });
+      } catch (error) {
+        console.error('❌ [POPUP] Error queueing single selected video:', error);
+        sendResponse({ success: false, error: error.message });
+      }
+    })();
+
+    return true;
   }
 });
