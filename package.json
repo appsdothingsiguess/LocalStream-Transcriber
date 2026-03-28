@@ -2,6 +2,7 @@
   "name": "mp3grabber",
   "version": "1.0.0",
   "description": "MP3 Grabber & Auto-Transcription System",
+  "license": "MIT",
   "main": "relay.js",
   "type": "module",
   "scripts": {

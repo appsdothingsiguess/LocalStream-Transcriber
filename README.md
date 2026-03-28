@@ -7,6 +7,7 @@
 
 <p align="center">
   <a href="https://github.com/appsdothingsiguess/LocalStream-Transcriber/releases/latest"><img src="https://img.shields.io/github/v/release/appsdothingsiguess/LocalStream-Transcriber?label=Download&logo=github" alt="Latest release"/></a>
+  <a href="./LICENSE"><img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="License: MIT"/></a>
   <a href="https://github.com/appsdothingsiguess/LocalStream-Transcriber"><img src="https://img.shields.io/badge/repo-LocalStream--Transcriber-24292f?logo=github" alt="Repository"/></a>
 </p>
 
@@ -626,10 +627,9 @@ This project is open for contributions. Key areas for improvement:
 
 ## License
 
-This project is open source. Please ensure you comply with:
-- OpenAI's Whisper license terms when using the Whisper models
-- faster-whisper project license terms
-- Applicable laws regarding audio recording and transcription in your jurisdiction
+This project’s **code** is licensed under the [MIT License](LICENSE).
+
+When you run transcription, you also use third-party **models and libraries** (e.g. Whisper / faster-whisper). Please comply with their licenses and with **laws in your jurisdiction** about recording and transcribing lectures or other audio.
 
 ## Acknowledgments
 
