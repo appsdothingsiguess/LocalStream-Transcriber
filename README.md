@@ -1,88 +1,133 @@
 # LocalStream – Private Lecture Transcriber
 
-This project’s GitHub repository is **[LocalStream-Transcriber](https://github.com/appsdothingsiguess/LocalStream-Transcriber)**. The same codebase is also known as **MP3 Grabber** (`mp3grabber` on npm) in older docs—one app, one repo.
+<p align="center">
+  <strong>Turn Canvas, Panopto, and YouTube-style lectures into searchable notes—on your own laptop.</strong><br/>
+  <sub>Open source · 100% local · No cloud transcription</sub>
+</p>
 
-## What is this?
+<p align="center">
+  <a href="https://github.com/appsdothingsiguess/LocalStream-Transcriber/releases/latest"><img src="https://img.shields.io/github/v/release/appsdothingsiguess/LocalStream-Transcriber?label=Download&logo=github" alt="Latest release"/></a>
+  <a href="https://github.com/appsdothingsiguess/LocalStream-Transcriber"><img src="https://img.shields.io/badge/repo-LocalStream--Transcriber-24292f?logo=github" alt="Repository"/></a>
+</p>
+
+---
+
+| | |
+|:---|:---|
+| **Repository** | **[LocalStream-Transcriber](https://github.com/appsdothingsiguess/LocalStream-Transcriber)** on GitHub |
+| **Also known as** | **MP3 Grabber** (`mp3grabber` in `package.json`) — same app, one repo |
+
+---
+
+## Table of contents
+
+1. [Start here (students)](#start-here-students)
+2. [Quick start (Windows)](#quick-start-windows)
+3. [Downloads and releases](#downloads-and-releases)
+4. [Technical overview](#technical-overview)
+5. [Prerequisites](#prerequisites)
+6. [How it works](#how-it-works)
+7. [Troubleshooting](#troubleshooting)
+
+---
+
+## Start here (students)
+
+### What is this?
 
 LocalStream turns lecture audio and video into **searchable text on your computer**—so you can skim, search, and study without rewatching whole recordings.
 
-## Why should I care as a student?
+### Why should I care?
 
 If you are juggling deadlines, need captions or text to follow along, or you learn better from notes than from scrubbing through long replays, this helps you **turn lectures into notes you can actually search**.
 
-## Does this work with Canvas, Panopto, or YouTube?
+### Canvas, Panopto, YouTube?
 
 **Yes.** It is built for **Canvas**, **Panopto**, **Kaltura**, and **YouTube**-style lecture pages (plus similar sites). You can also transcribe **files you already saved** (MP3, MP4, etc.) from any source.
 
-## Is my data staying on my laptop?
+### Is my data staying on my laptop?
 
 **Yes.** Transcription runs **entirely on your machine**. Your lecture audio is **not** sent to a cloud service for processing.
 
 ### At a glance
 
-- Turn **Canvas / Panopto / Kaltura / YouTube** lectures into text.
-- Works with **logged-in** school streams (Canvas, etc.).
-- **100% local** – no audio sent to external servers.
-- **Faster on a gaming-style NVIDIA GPU** if you have one; **works fine on CPU** too (usually slower).
+| | |
+|:---|:---|
+| **Platforms** | Canvas · Panopto · Kaltura · YouTube-style pages |
+| **School login** | Works with **logged-in** streams (e.g. Canvas) |
+| **Privacy** | **100% local** — no audio sent to external servers for transcription |
+| **Speed** | **GPU** faster if available; **CPU** works too (often slower) |
 
-### Who this is for
+**Who it’s for:** college and grad students who want **private, searchable lecture notes** without being developers.
 
-**Stressed college and grad students** who want **private, searchable lecture notes**—without being developers.
-
-### What it does
-
-You either **put media files** in a folder and run the app, or use a **small Chrome add-on** plus a local helper so pages you are already signed into can be turned into transcripts. You open a simple page in your browser at **`http://localhost:8787`** to watch progress. Finished text files land in the **`transcriptions/`** folder.
+**What you do:** put files in **`media/`** *or* use a small **Chrome add-on** plus a local helper for browser lectures; open **`http://localhost:8787`** for status; read transcripts in **`transcriptions/`**.
 
 ---
 
-## Quick Start for Students (Windows)
+## Quick start (Windows)
 
-You need two free runtimes installed once: **Node.js** and **Python**. If you do not have them yet:
+**You need once:** [Node.js (LTS)](https://nodejs.org/) and [Python 3.10–3.12](https://www.python.org/downloads/) — during Python setup on Windows, enable **“Add python.exe to PATH”**.
 
-- **Node.js** (LTS): [https://nodejs.org/](https://nodejs.org/)
-- **Python** 3.10–3.12: [https://www.python.org/downloads/](https://www.python.org/downloads/) — on Windows, check **“Add python.exe to PATH”** during install.
+| Step | What to do |
+|:---:|:---|
+| 1 | **Get the app:** [Latest release ZIP](https://github.com/appsdothingsiguess/LocalStream-Transcriber/releases/latest) *or* **Code → Download ZIP** on the repo, then unzip (e.g. `Documents\LocalStream-Transcriber`). |
+| 2 | **Run it:** Double-click **`START.bat`**. *(Fallback: open Command Prompt in the folder and run `npm run setup`.)* First run may take a while — normal. |
+| 3 | **Pick a mode:** **Option 1** — put audio/video in **`media/`** and transcribe. **Option 2** — browser helper for Canvas / Panopto / YouTube (install extension next). |
+| 4 | **Chrome extension (option 2 only):** `chrome://extensions/` → **Developer mode** → **Load unpacked** → select the **`extension/`** folder. |
+| 5 | **Progress & files:** Open **`http://localhost:8787`**. Transcripts save under **`transcriptions/`** as `.txt` with lines like `[00:01.234]`. |
 
-Then:
-
-1. **Get the project:** On GitHub, use **Code → Download ZIP**, then unzip the folder somewhere easy to find (for example `Documents\LocalStream-Transcriber`).
-2. **Open the folder** in File Explorer. Double-click **`START.bat`**.  
-   - If double-click does not work, open **Command Prompt** in that folder and type: `npm run setup` then press Enter.  
-   - The first run may take a while while it sets up helpers (including speech tools). That is normal.
-3. **Choose what you want:**
-   - **Option 1 – Transcribe files:** Put your audio or video files in the **`media/`** folder, then pick option **1** and follow the prompts. Good for files you already downloaded or recorded.
-   - **Option 2 – Browser + Canvas / Panopto / YouTube:** Pick option **2** to start the local helper. Then install the Chrome add-on (next step) and play your lecture in the browser while signed in.
-4. **Load the Chrome add-on (only for option 2):** In Chrome, go to `chrome://extensions/`, turn on **Developer mode**, click **Load unpacked**, and select the project’s **`extension/`** folder (the whole folder).
-5. **Watch progress:** In your browser, open **`http://localhost:8787`** to see status. **Finished transcripts** are saved under **`transcriptions/`** as `.txt` files with timestamps (like `[00:01.234]`) so you can match text to the recording.
-
-**No GPU?** That is okay. The app can use your **CPU**; it may take longer, but you get the same kind of output.
-
-**Privacy:** All transcription stays **on your laptop**; nothing is uploaded to the cloud for speech-to-text.
+> **No dedicated GPU?** CPU is fine; it may just take longer.  
+> **Privacy:** All speech-to-text runs **on your laptop**.
 
 ---
 
-## Downloads & Releases
+## Downloads and releases
 
-This section describes a **simple GitHub Releases** approach—no fancy installer, just a **download-and-run** flow on top of what already exists (`START.bat`, `npm run setup`, `package.json` as `mp3grabber@1.0.0`).
+There is **no Windows installer** yet — releases are **“download ZIP + first-run setup”** using **`START.bat`** and **`npm run setup`** (package name **`mp3grabber@1.0.0`** in `package.json`).
 
-### What a “Windows release ZIP” should contain
+### What goes in a release ZIP
 
-- **Full project source** as in the repo: `start.js`, `relay.js`, `transcribe.py`, `package.json`, `requirements.txt`, **`extension/`**, **`START.bat`**, empty or placeholder **`media/`** and **`transcriptions/`**, etc.
-- **Do not** ship a copied **`node_modules/`** folder from your machine (paths and binaries differ). The ZIP should instruct users to run setup so **`npm install`** runs on *their* PC.
-- **Optional:** A short **`INSTALL.txt`** in the ZIP: install Node + Python from the links above, unzip, double-click `START.bat`, choose option 1 or 2.
+| Include | Why |
+|:---|:---|
+| **Full project** | `start.js`, `relay.js`, `transcribe.py`, `package.json`, `requirements.txt`, **`extension/`**, **`START.bat`**, `media/`, `transcriptions/` (can be empty) |
+| **Setup on the user’s PC** | Run **`npm install`** / **`npm run setup`** on *their* machine — **do not** bundle your own **`node_modules/`** (breaks across PCs) |
+| **Optional `INSTALL.txt`** | “Install Node + Python → unzip → double-click `START.bat` → option 1 or 2” |
 
-Shipping **pre-filled `node_modules`** or a frozen Python env is possible for advanced maintainers but is **brittle** across Windows versions; the realistic default is **“ZIP + first-run `npm run setup`”**.
+Pre-bundling **`node_modules/`** or a full Python environment is possible for experts but is **fragile** on Windows; the **default** is **source ZIP + first-run setup**.
 
-### How a student uses a release (3–5 steps)
+### For users: install from a release
 
-1. On GitHub, open **Releases**, download the **latest Windows/source ZIP**.
-2. Unzip to a folder (for example `Documents\LocalStream-Transcriber`).
-3. Install **Node.js** and **Python** if prompted or if setup fails (links in **Quick Start for Students** above).
+1. Open **[Releases](https://github.com/appsdothingsiguess/LocalStream-Transcriber/releases)** → download the **latest** source/archive ZIP.
+2. Unzip anywhere (e.g. `Documents\LocalStream-Transcriber`).
+3. Install **Node.js** and **Python** if you have not already ([Quick start (Windows)](#quick-start-windows)).
 4. Double-click **`START.bat`** (or run `npm run setup` in that folder).
-5. Choose **option 1** (files in `media/`) or **option 2** (Chrome extension + `http://localhost:8787`), then find transcripts in **`transcriptions/`**.
+5. Choose **option 1** (`media/`) or **option 2** (extension + `http://localhost:8787`); transcripts appear in **`transcriptions/`**.
 
-### Maintainer note
+### For maintainers: how to publish a release
 
-Tag releases (e.g. `v1.0.0`) and attach the ZIP built from a **clean `git archive` or GitHub’s ZIP** of that tag so what students download matches the tagged commit.
+Use **either** the GitHub website **or** git tags — both end up on the same Releases page.
+
+**Option A — GitHub (no git CLI required)**
+
+1. Push your changes to **`main`** (or your default branch).
+2. On the repo, click **Releases** → **Create a new release**.
+3. Click **Choose a tag**, type a new tag name (e.g. **`v1.0.1`**), select **Create new tag on publish**, target **`main`**.
+4. **Release title:** e.g. `v1.0.1` or a short headline.
+5. **Describe** what changed (bullets are fine).
+6. Attachments: GitHub usually offers **Source code (zip/tar)** automatically when you publish — that is enough for students. Optionally add a second ZIP only if you have a **clean, reproducible** build script; otherwise avoid custom `node_modules` bundles.
+7. Click **Publish release**.
+
+**Option B — Tag from git, then publish on GitHub**
+
+```bash
+# From your repo folder, after committing:
+git tag -a v1.0.1 -m "Release v1.0.1: short description"
+git push origin v1.0.1
+```
+
+Then open **Releases → Draft a new release**, pick tag **`v1.0.1`**, add notes, **Publish**.
+
+**Versioning tip:** Bump **`version`** in `package.json` when you cut a meaningful release so docs and support match (e.g. `1.0.1` alongside tag `v1.0.1`).
 
 ---
 
