@@ -1766,11 +1766,21 @@ async function main() {
     saveConfig(cfg);
   }
 
-  // Compact ready line — show the saved model
+  // Compact ready line — show the saved model and whether it's already cached
   const activeConfig = loadConfig();
   const savedModel = activeConfig.WHISPER_MODEL || (gpuStatus.available ? 'medium' : 'base');
   const deviceLabel = gpuStatus.available ? 'GPU (CUDA)' : 'CPU';
-  log(`\n✅  Ready  ·  ${deviceLabel}  ·  ${savedModel}`, 'green');
+
+  // Check if the selected Whisper model is already in the HuggingFace cache
+  const hfCacheBase = process.env.HF_HOME
+    || path.join(process.env.USERPROFILE || process.env.HOME || '', '.cache', 'huggingface', 'hub');
+  const modelCacheDir = path.join(hfCacheBase, `models--Systran--faster-whisper-${savedModel}`);
+  const modelCached = existsSync(modelCacheDir);
+  const modelInfo = WHISPER_MODELS.find(m => m.id === savedModel);
+  const cacheNote = modelCached ? '' : `  (${modelInfo?.size ?? '?'} download on first use)`;
+
+  log(`\n✅  Ready  ·  ${deviceLabel}  ·  ${savedModel}${cacheNote}`, 'green');
+  if (cacheNote) log('   Model will be fetched from HuggingFace automatically when you first transcribe.', 'cyan');
   debug(`Processing device: ${gpuStatus.type}`, gpuStatus.color);
   if (gpuStatus.modelSource) debug(`Model source: ${gpuStatus.modelSource}`);
   if (gpuStatus.modelPath) debug(`Model path: ${gpuStatus.modelPath}`);
