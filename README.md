@@ -26,31 +26,22 @@
 2. [Quick start (Windows)](#quick-start-windows)
 3. [Downloads and releases](#downloads-and-releases)
 4. [Technical overview](#technical-overview)
-5. [Prerequisites](#prerequisites)
-6. [How it works](#how-it-works)
-7. [Troubleshooting](#troubleshooting)
+5. [How it works](#how-it-works)
+6. [Configuration](#configuration)
+7. [Supported formats](#supported-audio--video-formats)
+8. [Architecture & file structure](#architecture--file-structure)
+9. [Troubleshooting](#troubleshooting)
+10. [Output format](#transcription-output-format)
+11. [Dependencies](#dependencies)
+12. [Manual commands](#manual-commands-advanced)
+13. [Security & privacy](#security--privacy)
+14. [License](#license)
 
 ---
 
 ## Start here (students)
 
-### What is this?
-
 LocalStream turns lecture audio and video into **searchable text on your computer**—so you can skim, search, and study without rewatching whole recordings.
-
-### Why should I care?
-
-If you are juggling deadlines, need captions or text to follow along, or you learn better from notes than from scrubbing through long replays, this helps you **turn lectures into notes you can actually search**.
-
-### Canvas, Panopto, YouTube?
-
-**Yes.** It is built for **Canvas**, **Panopto**, **Kaltura**, and **YouTube**-style lecture pages (plus similar sites). You can also transcribe **files you already saved** (MP3, MP4, etc.) from any source.
-
-### Is my data staying on my laptop?
-
-**Yes.** Transcription runs **entirely on your machine**. Your lecture audio is **not** sent to a cloud service for processing.
-
-### At a glance
 
 | | |
 |:---|:---|
@@ -59,76 +50,101 @@ If you are juggling deadlines, need captions or text to follow along, or you lea
 | **Privacy** | **100% local** — no audio sent to external servers for transcription |
 | **Speed** | **GPU** faster if available; **CPU** works too (often slower) |
 
-**Who it’s for:** college and grad students who want **private, searchable lecture notes** without being developers.
+**Who it's for:** college and grad students who want **private, searchable lecture notes** without being developers.
 
-**What you do:** put files in **`media/`** *or* use a small **Chrome add-on** plus a local helper for browser lectures; open **`http://localhost:8787`** for status; read transcripts in **`transcriptions/`**.
+**Two ways to use it:**
+
+- **Option 1 – Files you have:** Put audio/video in the **`media/`** folder and run the app.
+- **Option 2 – Live browser streams:** Use a small **Chrome add-on** + a local helper to capture Canvas / Panopto / YouTube pages you are already signed into.
+
+Results land in **`transcriptions/`** as plain `.txt` files with timestamps like `[00:01.234]`.
 
 ---
 
 ## Quick start (Windows)
 
-**You need once:** [Node.js (LTS)](https://nodejs.org/) and [Python 3.10–3.12](https://www.python.org/downloads/) — during Python setup on Windows, enable **“Add python.exe to PATH”**.
+**Install once:** [Node.js (LTS)](https://nodejs.org/) and [Python 3.10–3.12](https://www.python.org/downloads/) — during Python setup on Windows, check **"Add python.exe to PATH"**.
 
 | Step | What to do |
 |:---:|:---|
-| 1 | **Get the app:** [Latest release ZIP](https://github.com/appsdothingsiguess/LocalStream-Transcriber/releases/latest) *or* **Code → Download ZIP** on the repo, then unzip (e.g. `Documents\LocalStream-Transcriber`). |
-| 2 | **Run it:** Double-click **`START.bat`**. *(Fallback: open Command Prompt in the folder and run `npm run setup`.)* First run may take a while — normal. |
-| 3 | **Pick a mode:** **Option 1** — put audio/video in **`media/`** and transcribe. **Option 2** — browser helper for Canvas / Panopto / YouTube (install extension next). |
-| 4 | **Chrome extension (option 2 only):** `chrome://extensions/` → **Developer mode** → **Load unpacked** → select the **`extension/`** folder. |
-| 5 | **Progress & files:** Open **`http://localhost:8787`**. Transcripts save under **`transcriptions/`** as `.txt` with lines like `[00:01.234]`. |
+| 1 | **Get the app:** [Latest release ZIP](https://github.com/appsdothingsiguess/LocalStream-Transcriber/releases/latest) or **Code → Download ZIP** on GitHub, then unzip (e.g. `Documents\LocalStream-Transcriber`). |
+| 2 | **Run it:** Double-click **`START.bat`**. *(Fallback: open Command Prompt in the folder and type `npm run setup`.)* The first run installs speech tools — this can take a few minutes. |
+| 3 | **Set your model** (before transcribing — see below). |
+| 4 | **Pick a mode:** **Option 1** — put audio/video in **`media/`** and transcribe. **Option 2** — browser helper for Canvas / Panopto / YouTube (install extension next). |
+| 5 | **Chrome extension (option 2 only):** Go to `chrome://extensions/` → turn on **Developer mode** → **Load unpacked** → select the **`extension/`** folder. |
+| 6 | **Progress & files:** Open **`http://localhost:8787`**. Finished transcripts appear in **`transcriptions/`**. |
 
-> **No dedicated GPU?** CPU is fine; it may just take longer.  
-> **Privacy:** All speech-to-text runs **on your laptop**.
+> **No dedicated GPU?** CPU works fine; it will just take longer.
+> **Privacy:** All speech-to-text runs on your laptop.
+
+### Choosing your Whisper model
+
+The app auto-selects a model based on whether a GPU is detected, but you can change it.
+
+Open **`transcribe.py`** and find the section around **line 221**:
+
+```python
+# Use "medium" model for GPU, "base" model for CPU
+if gpu_available:
+    result = transcribe_audio(audio_file, model_size="medium", use_gpu=True)
+    ...
+else:
+    result = transcribe_audio(audio_file, model_size="base", use_gpu=False)
+```
+
+| Model | Best for | Notes |
+|:---|:---|:---|
+| `tiny` | Very slow CPU, quick tests | Least accurate |
+| `base` | **CPU default** | Good balance of speed and accuracy on CPU |
+| `small` | Mid-range CPU or light GPU | Better accuracy, slower on CPU |
+| `medium` | **GPU default** | High accuracy; needs ~3 GB VRAM |
+| `large` | High-end GPU | Highest accuracy, very slow on CPU |
+
+**CPU-only laptop?** Keep `base` (the default). If you want higher accuracy and have time to spare, change `"base"` to `"small"` in the `else` branch.
+
+**NVIDIA GPU?** `medium` is the default. If you get GPU memory errors, drop to `"small"` or add `compute_type="int8"` (edit the `compute_type` line in `transcribe_audio`).
 
 ---
 
 ## Downloads and releases
 
-There is **no Windows installer** yet — releases are **“download ZIP + first-run setup”** using **`START.bat`** and **`npm run setup`** (package name **`mp3grabber@1.0.0`** in `package.json`).
+There is **no Windows installer** yet — releases are **"download ZIP + first-run setup"** using **`START.bat`** and **`npm run setup`**.
 
 ### What goes in a release ZIP
 
 | Include | Why |
 |:---|:---|
-| **Full project** | `start.js`, `relay.js`, `transcribe.py`, `package.json`, `requirements.txt`, **`extension/`**, **`START.bat`**, `media/`, `transcriptions/` (can be empty) |
-| **Setup on the user’s PC** | Run **`npm install`** / **`npm run setup`** on *their* machine — **do not** bundle your own **`node_modules/`** (breaks across PCs) |
-| **Optional `INSTALL.txt`** | “Install Node + Python → unzip → double-click `START.bat` → option 1 or 2” |
-
-Pre-bundling **`node_modules/`** or a full Python environment is possible for experts but is **fragile** on Windows; the **default** is **source ZIP + first-run setup**.
+| **Full project** | `start.js`, `relay.js`, `transcribe.py`, `package.json`, `requirements.txt`, **`extension/`**, **`START.bat`**, empty `media/` and `transcriptions/` |
+| **No `node_modules/`** | Paths and binaries differ per machine — `npm run setup` installs them on the user's PC |
+| **Optional `INSTALL.txt`** | "Install Node + Python → unzip → double-click `START.bat` → option 1 or 2" |
 
 ### For users: install from a release
 
-1. Open **[Releases](https://github.com/appsdothingsiguess/LocalStream-Transcriber/releases)** → download the **latest** source/archive ZIP.
+1. Open **[Releases](https://github.com/appsdothingsiguess/LocalStream-Transcriber/releases)** → download the **latest** source ZIP.
 2. Unzip anywhere (e.g. `Documents\LocalStream-Transcriber`).
-3. Install **Node.js** and **Python** if you have not already ([Quick start (Windows)](#quick-start-windows)).
-4. Double-click **`START.bat`** (or run `npm run setup` in that folder).
-5. Choose **option 1** (`media/`) or **option 2** (extension + `http://localhost:8787`); transcripts appear in **`transcriptions/`**.
+3. Install **Node.js** and **Python** if needed (see [Quick start](#quick-start-windows)).
+4. Double-click **`START.bat`** (or run `npm run setup`).
+5. Choose **option 1** or **option 2** — transcripts appear in **`transcriptions/`**.
 
 ### For maintainers: how to publish a release
 
-Use **either** the GitHub website **or** git tags — both end up on the same Releases page.
+**GitHub UI (simplest)**
 
-**Option A — GitHub (no git CLI required)**
+1. Push changes to `main`.
+2. **Releases → Create a new release**.
+3. **Choose a tag** → type e.g. `v1.0.2` → **Create new tag on publish**, target `main`.
+4. Add a title and release notes, then **Publish release**. GitHub auto-attaches source ZIPs.
 
-1. Push your changes to **`main`** (or your default branch).
-2. On the repo, click **Releases** → **Create a new release**.
-3. Click **Choose a tag**, type a new tag name (e.g. **`v1.0.1`**), select **Create new tag on publish**, target **`main`**.
-4. **Release title:** e.g. `v1.0.1` or a short headline.
-5. **Describe** what changed (bullets are fine).
-6. Attachments: GitHub usually offers **Source code (zip/tar)** automatically when you publish — that is enough for students. Optionally add a second ZIP only if you have a **clean, reproducible** build script; otherwise avoid custom `node_modules` bundles.
-7. Click **Publish release**.
-
-**Option B — Tag from git, then publish on GitHub**
+**Via git tag**
 
 ```bash
-# From your repo folder, after committing:
-git tag -a v1.0.1 -m "Release v1.0.1: short description"
-git push origin v1.0.1
+git tag -a v1.0.2 -m "Release v1.0.2: short description"
+git push origin v1.0.2
 ```
 
-Then open **Releases → Draft a new release**, pick tag **`v1.0.1`**, add notes, **Publish**.
+Then open **Releases → Draft a new release**, select the tag, add notes, publish.
 
-**Versioning tip:** Bump **`version`** in `package.json` when you cut a meaningful release so docs and support match (e.g. `1.0.1` alongside tag `v1.0.1`).
+> **Tip:** Bump `version` in `package.json` to match the tag (e.g. `1.0.2` with tag `v1.0.2`).
 
 ---
 
@@ -136,104 +152,38 @@ Then open **Releases → Draft a new release**, pick tag **`v1.0.1`**, add notes
 
 The app uses **[faster-whisper](https://github.com/SYSTRAN/faster-whisper)** (OpenAI Whisper, optimized) for speech-to-text, with optional NVIDIA GPU acceleration.
 
-**NEW in v0.4**: Network sniffing architecture for HLS/DASH stream support and authenticated content (Canvas, Kaltura, Panopto).
+- 🎯 **Local & web-based transcription** — process files from disk or capture from web pages
+- 🌊 **HLS/DASH stream support** — automatically detects and downloads `.m3u8` and `.mpd` streams
+- 🔐 **Authenticated content** — captures session cookies for Canvas, Kaltura, Panopto
+- ⚡ **GPU acceleration** — 4× faster with NVIDIA CUDA; automatic CPU fallback
+- 🌐 **Browser extension** — Chrome extension (Manifest V3) with passive network interception
+- 📊 **Real-time progress** — live WebSocket updates at `http://localhost:8787`
+- 🔒 **100% local** — all processing happens on your machine
+- 🎬 **Multi-format** — audio (MP3, M4A, WAV, FLAC, OGG, WebM) and video (MP4, MKV, AVI)
+- 📝 **Timestamped output** — `[MM:SS.mmm]` format with language and confidence metadata
 
-### Key Features at a Glance
+---
 
-- 🎯 **Local & Web-Based Transcription**: Process files from disk or capture from web pages
-- 🌊 **HLS/DASH Stream Support**: Automatically detects and downloads `.m3u8` and `.mpd` streams
-- 🔐 **Authenticated Content**: Captures session cookies for Canvas, Kaltura, Panopto
-- ⚡ **GPU Acceleration**: 4x faster with NVIDIA CUDA support, automatic CPU fallback
-- 🌐 **Browser Extension**: Chrome extension with passive network interception
-- 📊 **Real-Time Progress**: Live WebSocket updates and progress tracking
-- 🔒 **100% Privacy**: All processing happens locally on your machine
-- 🎬 **Multi-Format Support**: Audio (MP3, M4A, WAV, FLAC, OGG, WebM) and Video (MP4, MKV, AVI)
-- 📝 **Timestamped Output**: Transcriptions include precise timestamps for each segment
+## How it works
 
-## Prerequisites
+### Option 1 — File transcription
 
-**Before running this project, you must have:**
+1. Place audio/video files in **`media/`**.
+2. Run `npm run setup` → select **option 1**.
+3. Choose a file from the list.
+4. Watch real-time progress (GPU/CPU status shown).
+5. Transcript saved to **`transcriptions/`** with metadata (device, language, confidence).
 
-- **Node.js** (version 14 or higher) - [Download here](https://nodejs.org/)
-- **Python** (version 3.10 - 3.12) - [Download here](https://python.org/)
-- **yt-dlp** (installed automatically by setup script) - For stream downloading
-- **ffmpeg** (installed automatically by setup script) - For stream processing
-- **NVIDIA GPU** (optional) - For GPU acceleration with CUDA
+### Option 2 — Browser extension (Canvas / Panopto / YouTube)
 
-**Note**: yt-dlp and ffmpeg are automatically installed during setup. If auto-installation fails, manual installation instructions will be provided.
+1. Run `npm run setup` → select **option 2** to start the relay server.
+2. Load the extension in Chrome: `chrome://extensions/` → **Developer mode** → **Load unpacked** → `extension/` folder.
+3. Navigate to your lecture page (already signed in). Streams are captured automatically when the page requests them.
+4. Optional: press **`Ctrl+Shift+M`** to verify the connection.
+5. Watch progress at **`http://localhost:8787`**; transcripts appear in **`transcriptions/`**.
 
-## Quick Start
+**Supported platforms:**
 
-### One-Time Setup Command
-
-```bash
-npm run setup
-```
-
-### Force Reinstall (if needed)
-
-```bash
-npm run setup:install
-```
-
-**That's it!** This single command will:
-1. ✅ Check prerequisites (Node.js, Python, yt-dlp, ffmpeg)
-2. 📦 Install all dependencies automatically (including ffmpeg)
-3. 🎮 Detect NVIDIA GPU and install CUDA libraries
-4. 🐍 Set up faster-whisper with GPU support
-5. 📁 Create necessary folders and configuration files
-6. 🚀 Present you with transcription options
-
-### What You Get
-
-After running `npm run setup`, you can choose:
-
-1. **📁 File Transcription**: Process media files from the `media/` folder
-2. **🌐 Extension Mode**: Start WebSocket server for browser extension
-3. **❌ Exit**: Close the application
-
-## How It Works
-
-### File Transcription Mode
-
-1. **Place Files**: Add audio/video files to the `media/` folder
-2. **Run Setup**: Execute `npm run setup` → Select option 1
-3. **Choose File**: Select from the list of available media files
-4. **Watch Progress**: Real-time status updates with GPU/CPU detection
-5. **Get Results**: Transcription automatically saved to `transcriptions/` folder with metadata
-
-**Features:**
-- Real-time progress updates during transcription
-- Automatic GPU detection and CPU fallback
-- Segment-by-segment processing with progress indicators
-- Timestamped output with `[MM:SS.mmm]` format
-- Metadata includes device used, language detected, and confidence scores
-
-### Extension Mode (Browser-Based Transcription)
-
-1. **Start Server**: Run `npm run setup` → Select option 2
-2. **Install Extension**: 
-   - Open Chrome and go to `chrome://extensions/`
-   - Enable "Developer mode"
-   - Click "Load unpacked" and select the `extension/` folder
-3. **Capture Audio**:
-   - Navigate to any webpage with audio/video content (including HLS/DASH streams)
-   - **Automatic detection**: Streams are captured automatically when detected
-   - **Manual trigger** (optional): Press `Ctrl+Shift+M` to verify connection
-   - Extension captures stream URLs with session cookies
-4. **View Progress**: Open `http://localhost:8787` for real-time transcription status
-5. **Get Results**: Transcriptions saved to `transcriptions/` folder with unique IDs
-
-**Extension Features:**
-- **Network sniffing**: Passively monitors network requests for streaming content
-- **HLS/DASH support**: Detects `.m3u8` and `.mpd` manifests automatically
-- **Cookie extraction**: Captures session cookies for authenticated content
-- **yt-dlp integration**: Uses industry-standard downloader for complex streams
-- **WebSocket communication**: Real-time updates to relay server
-- **Debounce mechanism**: Prevents duplicate stream captures
-- **Live viewer interface** at `http://localhost:8787`
-
-**Supported Platforms:**
 - ✅ Canvas LMS
 - ✅ Kaltura
 - ✅ Panopto
@@ -242,397 +192,243 @@ After running `npm run setup`, you can choose:
 - ✅ Any platform using HLS/DASH protocols
 - ✅ Direct audio/video file links
 
-**Extension Limitations:**
-- ❌ **DRM-protected content**: Widevine encryption cannot be bypassed (Netflix, Disney+)
-- ⚠️  **Cookie expiration**: Very long downloads may expire session cookies
-- ⚠️  **Network detection**: Page must actively request `.m3u8` or `.mpd` files
+**Extension limitations:**
 
-## Features
+- ❌ **DRM-protected content** — Widevine encryption cannot be bypassed (Netflix, Disney+, etc.)
+- ⚠️ **Cookie expiration** — very long downloads may expire session cookies
+- ⚠️ **Network detection** — page must actively request `.m3u8` or `.mpd` files
 
-### 🚀 **High Performance**
-- **4x faster** than original Whisper
-- **50% less memory** usage
-- **GPU acceleration** with NVIDIA CUDA support
-- **Automatic CPU fallback** if GPU unavailable
+---
 
-### 🎯 **Smart Processing**
-- **Real-time progress bars** during transcription
-- **GPU/CPU status display** 
-- **Automatic language detection**
-- **High accuracy** speech recognition
+## Configuration
 
-### 🔒 **Privacy & Security**
-- **100% local processing** - no data sent to external services
-- **Temporary files** automatically cleaned up
-- **Your data stays on your machine**
+### Whisper model size (`transcribe.py`)
 
-### 📁 **Organized Output**
-- All transcriptions saved to `transcriptions/` folder
-- Original media files remain in `media/` folder
-- Clean, organized file structure
+See [Choosing your Whisper model](#choosing-your-whisper-model) in Quick start for the full table. In short: edit the `model_size` strings at **line ~221** of `transcribe.py`.
 
-## Supported Audio & Video Formats
+### Server port
 
-The system supports all these formats for both file transcription and browser extension:
+Edit **`relay.js` line 15** and **`extension/bg.js` line 1** to change the port from the default `8787`.
 
-**Audio Formats:**
-- **MP3** (`.mp3`) - Most common
-- **WAV** (`.wav`) - Uncompressed
-- **M4A** (`.m4a`) - Apple format ⭐ *Now supported by browser extension*
-- **FLAC** (`.flac`) - Lossless
-- **OGG** (`.ogg`) - Open source
-- **WebM** (`.webm`) - Web format
+### GPU memory errors
 
-**Video Formats (audio track extracted automatically):**
-- **MP4** (`.mp4`) - Common video format
-- **MKV** (`.mkv`) - Matroska video
-- **AVI** (`.avi`) - Audio Video Interleave
+In `transcribe_audio()` in `transcribe.py`, change `compute_type="float16"` to `compute_type="int8"` to reduce VRAM usage.
 
-## Architecture & File Structure
+---
 
-### Project Structure
+## Supported audio & video formats
+
+**Audio:** `.mp3` · `.wav` · `.m4a` · `.flac` · `.ogg` · `.webm`
+
+**Video (audio track extracted automatically):** `.mp4` · `.mkv` · `.avi`
+
+---
+
+## Architecture & file structure
 
 ```
 mp3grabber/
 ├── media/                    # Place your audio/video files here
-│   └── README.md            # Media folder documentation
-├── transcriptions/          # All transcription results saved here
-│   └── README.md            # Transcriptions folder documentation
-├── uploads/                 # Temporary files from browser extension
-├── downloads/               # Temporary cookie files for yt-dlp
-├── extension/               # Browser extension files
-│   ├── manifest.json        # Extension configuration (v3)
-│   ├── bg.js               # Background service worker
-│   ├── content.js          # (DEPRECATED - no longer used)
-│   └── README.md           # Extension documentation
-├── whisper-bin/             # Whisper model cache (auto-created)
-├── config.json             # Installation state tracking
-├── package.json            # Node.js dependencies
-├── requirements.txt        # Python dependencies
-├── start.js                # Interactive setup and menu system
-├── relay.js                # Express + WebSocket server
-├── transcribe.py           # Python transcription script (faster-whisper)
-├── viewer.html             # Real-time web UI for transcriptions
-├── MIGRATION_GUIDE.md      # v0.3 → v0.4 upgrade guide
-├── IMPLEMENTATION_SUMMARY.md # Technical implementation details
-└── README.md               # This file
+├── transcriptions/           # All transcription results saved here
+├── uploads/                  # Temporary files from browser extension
+├── downloads/                # Temporary cookie files for yt-dlp
+├── extension/
+│   ├── manifest.json         # Extension configuration (Manifest V3)
+│   ├── bg.js                 # Background service worker
+│   └── README.md
+├── whisper-bin/              # Whisper model cache (auto-created)
+├── config.json               # Installation state tracking
+├── package.json
+├── requirements.txt
+├── start.js                  # Interactive setup and menu
+├── relay.js                  # Express + WebSocket server
+├── transcribe.py             # Python transcription script (faster-whisper)
+├── viewer.html               # Real-time web UI at localhost:8787
+├── START.bat                 # Windows launcher
+└── README.md
 ```
 
-### Technical Architecture
+**Data flow:**
 
-**v0.4 Architecture (Network Sniffing):**
+1. **File mode:** `media/` → `start.js` → `transcribe.py` → `transcriptions/`
+2. **Extension mode:** `webpage` → `extension` → WebSocket → `relay.js` → `yt-dlp` → `transcribe.py` → `transcriptions/`
 
-```
-┌─────────────┐
-│ Web Browser │
-└──────┬──────┘
-       │ Network Requests (.m3u8, .mpd)
-       ▼
-┌──────────────────────┐
-│ Chrome Extension     │
-│ (bg.js)              │
-│ - webRequest API     │
-│ - Cookie extraction  │
-└──────┬───────────────┘
-       │ WebSocket (stream_found + cookies)
-       ▼
-┌──────────────────────┐
-│ Relay Server         │
-│ (relay.js)           │
-│ - Cookie → Netscape  │
-│ - Spawn yt-dlp       │
-└──────┬───────────────┘
-       │ Execute with cookies
-       ▼
-┌──────────────────────┐
-│ yt-dlp               │
-│ - Download HLS/DASH  │
-│ - Handle auth        │
-└──────┬───────────────┘
-       │ Downloaded file
-       ▼
-┌──────────────────────┐
-│ Transcription Engine │
-│ (transcribe.py)      │
-│ - faster-whisper     │
-│ - GPU/CPU support    │
-└──────────────────────┘
-```
+**Stack:** Node.js (Express + WebSocket), Python (faster-whisper), yt-dlp, Chrome Extension (Manifest V3), NVIDIA CUDA (optional).
 
-**Backend Stack:**
-- **Node.js** (Express): HTTP server and WebSocket management
-- **yt-dlp**: Stream downloader with cookie authentication
-- **Python** (faster-whisper): Audio transcription engine
-- **WebSocket (ws)**: Real-time bidirectional communication
-- **CUDA** (optional): GPU acceleration for transcription
-
-**Frontend Stack:**
-- **Chrome Extension (Manifest V3)**: Audio capture and injection
-- **Vanilla JavaScript**: Real-time viewer interface
-- **WebSocket Client**: Live status updates
-
-**Data Flow:**
-1. **File Mode**: `media/` → `start.js` → `transcribe.py` → `transcriptions/`
-2. **Extension Mode**: `webpage` → `extension` → `WebSocket` → `relay.js` → `transcribe.py` → `transcriptions/`
+---
 
 ## Troubleshooting
 
-### Common Issues
+### Common issues
+
+**"Python not found"**
+- Install Python 3.10–3.12 from [python.org](https://python.org/) and check **"Add Python to PATH"** during install.
+
+**"Node.js not found"**
+- Install Node.js 14+ from [nodejs.org](https://nodejs.org/). Verify with `node --version`.
 
 **"yt-dlp not found"**
 ```bash
 pip install yt-dlp
-# Or force reinstall
+# or force reinstall everything:
 npm run setup:install
 ```
 
-**"WebSocket connection failed"**
-- Ensure relay server is running: `npm run setup` → option 2
-- Check firewall isn't blocking `localhost:8787`
-- Verify extension is loaded in Chrome
-
-**"No streams detected"**
-- Open Chrome DevTools → Network tab
-- Filter by `.m3u8` or `.mpd`
-- If no results, page isn't using HLS/DASH
-- Try direct file links (backward compatible)
-
-**"Download succeeded but file not found"**
-- Check `uploads/` directory for UUID-prefixed files
-- Verify yt-dlp completed (check relay server logs)
-- Extension may need reload
-
-### Migrating from v0.3
-
-If you're upgrading from the old DOM scraping version, see [`MIGRATION_GUIDE.md`](MIGRATION_GUIDE.md) for:
-- Architecture comparison
-- Breaking changes
-- Testing procedures
-- Rollback instructions
-
-### Common Issues
-
-**"Python not found"**
-- Install Python 3.9+ from [python.org](https://python.org/)
-- Make sure Python is added to your system PATH
-- On Windows, check "Add Python to PATH" during installation
-
-**"Node.js not found"**
-- Install Node.js 14+ from [nodejs.org](https://nodejs.org/)
-- Verify installation: `node --version`
+**"No audio files found"**
+- Place files in the **`media/`** folder. Supported: `.mp3 .wav .m4a .flac .ogg .webm .mp4 .mkv .avi`
 
 **"GPU not working"**
-- Install NVIDIA drivers from [nvidia.com](https://nvidia.com)
-- Install CUDA Toolkit 12.x from [NVIDIA CUDA Downloads](https://developer.nvidia.com/cuda-downloads)
-- System will automatically fallback to CPU mode if GPU unavailable
-- CPU mode works perfectly, just 2-4x slower
-
-**"No audio files found"**
-- Place supported audio/video files in the `media/` folder
-- Supported formats: .mp3, .wav, .m4a, .flac, .ogg, .webm, .mp4, .mkv, .avi
-- Files must have the correct file extension
-
-**"WebSocket connection failed"**
-- Make sure relay server is running (`npm run setup` → Option 2)
-- Check if port 8787 is available (not used by another application)
-- Verify firewall isn't blocking local connections
-- Try restarting the server
-
-**"Extension not working"**
-- Reload the extension in `chrome://extensions/`
-- Check browser console (F12) for error messages
-- Ensure relay server is running before using extension
-- Extension works best with direct audio file links
+- Install NVIDIA drivers from [nvidia.com](https://nvidia.com) and CUDA Toolkit 12.x from [NVIDIA CUDA Downloads](https://developer.nvidia.com/cuda-downloads).
+- The app falls back to CPU automatically — CPU is 2–4× slower but equally accurate.
 
 **"Transcription takes too long"**
-- GPU mode is 4x faster - ensure CUDA is properly installed
-- Use smaller audio files for faster processing
-- Close other GPU-intensive applications
-- CPU mode is slower but equally accurate
+- On CPU: switch to `"small"` or keep `"base"` model in `transcribe.py`. Close other heavy apps.
+- On GPU: ensure CUDA is installed. Consider `compute_type="int8"` if memory is limited.
 
-**"Module not found" errors**
-- Run `npm run setup:install` to force reinstall
-- Verify all dependencies installed: `npm install`
-- For Python dependencies: `pip install faster-whisper`
+**"WebSocket connection failed"**
+- Make sure the relay server is running (`npm run setup` → option 2).
+- Check that port `8787` is not blocked by a firewall or used by another app.
+- Reload the extension in `chrome://extensions/` and try restarting the server.
 
-**"Cannot find module './debug'" error**
-This error occurs when `node_modules` is corrupted or incomplete (common when copying the project to a new folder). 
+**"No streams detected"**
+- Open Chrome DevTools → Network tab → filter by `.m3u8` or `.mpd`. If nothing appears, the page is not using HLS/DASH.
+- Try loading a direct file URL instead.
 
-**Quick Fix:**
+**"Download succeeded but file not found"**
+- Check `uploads/` for UUID-prefixed files; verify yt-dlp completed (check relay server logs).
+
+**"Cannot find module './debug'" / "Module not found"**
+
+Quick fix:
 ```bash
 npm run fix
 ```
 
-**Manual Fix:**
+Manual fix:
 ```bash
-# Delete corrupted node_modules and lock file
-rm -rf node_modules package-lock.json
-# On Windows (PowerShell):
-# Remove-Item -Recurse -Force node_modules, package-lock.json
-
-# Clear npm cache
+# Windows PowerShell:
+Remove-Item -Recurse -Force node_modules, package-lock.json
 npm cache clean --force
-
-# Reinstall dependencies
 npm install
 ```
 
-**Important:** When copying this project to a new folder, always run `npm install` in the new location. Never copy the `node_modules` folder directly.
+> Never copy `node_modules/` between machines — always run `npm install` in the new location.
 
-### Performance Tips
+### Migrating from v0.3
 
-- **GPU Acceleration**: Use NVIDIA GPU with CUDA for 4x faster processing
-- **Model Size**: GPU uses "medium" model, CPU uses "base" model for better performance
-- **File Size**: Smaller files (< 10 minutes) process faster
-- **Memory**: Ensure at least 4GB RAM (8GB+ recommended for GPU mode)
-- **CPU**: Close other applications to free up resources
-- **Batch Processing**: Process multiple files sequentially for efficiency
+See [`MIGRATION_GUIDE.md`](MIGRATION_GUIDE.md) for architecture changes, breaking changes, and rollback instructions.
 
-### Advanced Configuration
+### Performance tips
 
-**Changing Whisper Model Size:**
-Edit `transcribe.py` lines 602-608 to adjust model size:
-- `tiny`: Fastest, least accurate
-- `base`: Fast, good accuracy (CPU default)
-- `small`: Balanced
-- `medium`: High accuracy (GPU default)
-- `large`: Highest accuracy, slowest
+- **GPU:** CUDA + `medium` model = ~4× faster than CPU.
+- **CPU:** Use `base` (default) or `small` for a speed/accuracy trade-off.
+- **RAM:** 4 GB minimum; 8 GB+ recommended for GPU mode.
+- **Files:** Files under 10 minutes process noticeably faster.
 
-**Changing Server Port:**
-Edit `relay.js` line 15 and `extension/bg.js` line 1 to change port from 8787
+---
 
-**GPU Memory Issues:**
-If GPU runs out of memory, edit `transcribe.py` line 458 to use `compute_type="int8"` instead of `"float16"`
-
-## Transcription Output Format
-
-Transcription files in the `transcriptions/` folder include:
+## Transcription output format
 
 ```
 Transcription Results
 Generated: 2024-10-26 15:39:48
-Source: voice-message.mp3
+Source: lecture.mp4
 Device: GPU
 Compute Type: float16
 Model Size: medium
 Language: en (99.8% confidence)
 
 --- TRANSCRIPTION ---
-[00:00.000] Welcome to the MP3 Grabber transcription system.
-[00:05.230] This is a demonstration of the timestamped output format.
-[00:10.450] Each segment includes precise timing information.
+[00:00.000] Welcome to the lecture.
+[00:05.230] Today we are covering...
+[00:10.450] Each segment includes precise timing.
 ```
 
-**Output Features:**
-- Header with metadata (device, model, language, confidence)
-- Timestamps in `[MM:SS.mmm]` format
-- UTF-8 encoding for international characters
-- Automatic line breaks for readability
-- Source file tracking
+---
 
 ## Dependencies
 
-### Node.js Packages
-- `express` ^4.19.2 - Web server framework
-- `ws` ^8.17.0 - WebSocket implementation
-- `node-fetch` ^3.3.2 - HTTP client
-- `uuid` ^9.0.1 - Unique ID generation
+### Node.js
 
-### Python Packages
-- `faster-whisper` - High-performance Whisper implementation
-- `yt-dlp` - Stream downloader with HLS/DASH support
-- `nvidia-cublas-cu12` (optional) - CUDA linear algebra library
-- `nvidia-cudnn-cu12==9.*` (optional) - CUDA deep neural network library
+| Package | Version | Purpose |
+|:---|:---|:---|
+| `express` | ^4.19.2 | HTTP server |
+| `ws` | ^8.17.0 | WebSocket |
+| `node-fetch` | ^3.3.2 | HTTP client |
+| `uuid` | ^9.0.1 | Unique IDs |
 
-All dependencies are automatically installed via `npm run setup` or can be installed manually via `pip install -r requirements.txt`.
+### Python
 
-## Manual Commands (Advanced)
+- `faster-whisper` — speech-to-text engine
+- `yt-dlp` — HLS/DASH stream downloader
+- `nvidia-cublas-cu12` *(optional)* — CUDA support
+- `nvidia-cudnn-cu12==9.*` *(optional)* — CUDA support
 
-If you prefer manual setup:
+All installed automatically via `npm run setup`, or manually: `pip install -r requirements.txt`.
+
+---
+
+## Manual commands (advanced)
 
 ```bash
 # Install Node.js dependencies
 npm install
 
-# Install Python dependencies from requirements.txt
+# Install Python dependencies
 pip install -r requirements.txt
 
-# Or install individually:
-pip install faster-whisper yt-dlp
-
-# Install GPU libraries (optional, for NVIDIA GPUs)
+# GPU libraries (NVIDIA only)
 pip install nvidia-cublas-cu12 nvidia-cudnn-cu12==9.*
 
-# Run file transcription mode
+# Run setup menu
 npm run setup
-# Then select option 1
 
-# Start relay server for extension mode
-npm start
-# or
-node relay.js
+# Start relay server only (extension mode)
+npm start         # or: node relay.js
 
-# Force reinstall all dependencies
+# Force reinstall everything
 npm run setup:install
+
+# Transcribe a file directly (outputs JSON)
+python transcribe.py path/to/audio.mp3
 ```
 
-### Direct Python Usage
+---
 
-You can also use the transcription script directly:
+## Security & privacy
 
-```bash
-python transcribe.py path/to/audio/file.mp3
-```
+- ✅ **100% local processing** — no data sent to external servers for transcription
+- ✅ **No telemetry** — no usage tracking or analytics
+- ✅ **Temporary file cleanup** — extension downloads deleted after processing
+- ✅ **Open source** — inspect all code in this repo
+- ⚠️ **Network** — the browser extension communicates with a **local** WebSocket server only (`localhost:8787`)
 
-Output is JSON with transcription results:
-```json
-{
-  "success": true,
-  "transcript": "[00:00.000] Transcribed text...",
-  "language": "en",
-  "language_probability": 0.998,
-  "device": "cuda",
-  "compute_type": "float16",
-  "model_size": "medium",
-  "segment_count": 42,
-  "output_file": "path/to/transcriptions/file.txt"
-}
-```
-
-## Security & Privacy
-
-- ✅ **100% Local Processing**: No data sent to external servers
-- ✅ **No Cloud Dependencies**: Everything runs on your machine
-- ✅ **No Telemetry**: No usage tracking or analytics
-- ✅ **Temporary File Cleanup**: Extension downloads are automatically deleted after processing
-- ✅ **Open Source**: Full transparency - inspect all code
-- ⚠️ **Network**: Browser extension communicates with local WebSocket server only (localhost:8787)
+---
 
 ## Contributing
 
-This project is open for contributions. Key areas for improvement:
-- Additional language support and optimization
+Open for contributions. Key areas:
+- Additional language support and model tuning
 - Better YouTube integration (within legal/technical limits)
 - UI/UX improvements for the web viewer
-- Additional audio source integrations
 - Performance optimizations
 
-## Known Limitations
+## Known limitations
 
-1. **YouTube**: Videos may be encrypted or DRM-protected, limiting direct access
-2. **Streaming Services**: Many use DRM protection that prevents audio capture
-3. **CORS**: Some websites block cross-origin requests
-4. **File Size**: Very large files (>2 hours) may require significant processing time
-5. **GPU Memory**: Large models on consumer GPUs may require lower precision settings
+1. **DRM content** — Netflix, Disney+, and similar services use Widevine DRM; this tool cannot bypass it.
+2. **Cookie expiration** — very long downloads on authenticated streams may fail if cookies expire.
+3. **HLS/DASH only** — the browser extension only detects `.m3u8` and `.mpd` requests; plain `<video>` src tags require direct file links.
+4. **Large files** — files over 2 hours require significant processing time and memory.
+5. **GPU memory** — large models on consumer GPUs may need `compute_type="int8"`.
 
 ## License
 
-This project’s **code** is licensed under the [MIT License](LICENSE).
+This project's **code** is licensed under the [MIT License](LICENSE).
 
 When you run transcription, you also use third-party **models and libraries** (e.g. Whisper / faster-whisper). Please comply with their licenses and with **laws in your jurisdiction** about recording and transcribing lectures or other audio.
 
 ## Acknowledgments
 
-- **[faster-whisper](https://github.com/SYSTRAN/faster-whisper)** by SYSTRAN - High-performance Whisper implementation
-- **[OpenAI Whisper](https://github.com/openai/whisper)** - Original speech recognition model
-- **NVIDIA CUDA** - GPU acceleration framework
+- **[faster-whisper](https://github.com/SYSTRAN/faster-whisper)** by SYSTRAN — high-performance Whisper implementation
+- **[OpenAI Whisper](https://github.com/openai/whisper)** — original speech recognition model
+- **NVIDIA CUDA** — GPU acceleration framework
