@@ -1087,11 +1087,9 @@ wss.on('connection', ws => {
                       const entryId = jobQueue.extractEntryId(url);
                       const baseName = entryId && entryId !== url ? entryId : outputFilename.replace(/\.[^.]+$/, '');
                       const transcriptPath = path.join(TRANSCRIPTIONS_DIR, `${baseName}.txt`);
+                      const transcriptUri = `file:///${transcriptPath.replace(/\\/g, '/')}`;
                       console.log(`✅   Done`);
-                      console.log(`     ${transcriptPath}`);
-                      if (process.platform === 'win32') {
-                        try { spawn('cmd', ['/c', 'start', '""', transcriptPath], { detached: true, stdio: 'ignore' }).unref(); } catch (_) {}
-                      }
+                      process.stdout.write(`     \x1b]8;;${transcriptUri}\x1b\\${transcriptPath}\x1b]8;;\x1b\\\n`);
                       dbg(`Transcription complete for job ${jobId}`);
 
                       const resultMessage = JSON.stringify({
@@ -1263,8 +1261,9 @@ wss.on('connection', ws => {
                   console.log('🎙️   Transcribing...');
                   const transcript = transcribe(localFilePath);
                   const blobTranscriptPath = path.join(TRANSCRIPTIONS_DIR, `${jobId}.txt`);
+                  const blobUri = `file:///${blobTranscriptPath.replace(/\\/g, '/')}`;
                   console.log(`✅   Done`);
-                  console.log(`     ${blobTranscriptPath}`);
+                  process.stdout.write(`     \x1b]8;;${blobUri}\x1b\\${blobTranscriptPath}\x1b]8;;\x1b\\\n`);
                   dbg(`Transcription complete for job ${jobId}`);
 
                   const resultMessage = JSON.stringify({
@@ -1353,8 +1352,9 @@ wss.on('connection', ws => {
                   console.log('🎙️   Transcribing...');
                   const transcript = transcribe(localFilePath);
                   const urlTranscriptPath = path.join(TRANSCRIPTIONS_DIR, `${jobId}.txt`);
+                  const urlUri = `file:///${urlTranscriptPath.replace(/\\/g, '/')}`;
                   console.log(`✅   Done`);
-                  console.log(`     ${urlTranscriptPath}`);
+                  process.stdout.write(`     \x1b]8;;${urlUri}\x1b\\${urlTranscriptPath}\x1b]8;;\x1b\\\n`);
                   dbg(`Transcription complete for job ${jobId}`);
 
                   const resultMessage = JSON.stringify({

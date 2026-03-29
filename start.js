@@ -1513,16 +1513,10 @@ async function transcribeFile() {
       const langInfo = `${transcriptionResult.language} ${(transcriptionResult.language_probability * 100).toFixed(0)}%`;
       const outFile = transcriptionResult.output_file ? path.basename(transcriptionResult.output_file) : selectedFile;
       const absPath = path.resolve(transcriptionResult.output_file || path.join(TRANSCRIPTIONS_DIR, outFile));
+      const fileUri = `file:///${absPath.replace(/\\/g, '/')}`;
       log(`\n✅  Done  (${duration}s · ${deviceLabel} · ${langInfo})`, 'green');
-      log(`   ${absPath}`, 'cyan');
-
-      // Auto-open the transcript in the default text editor
-      if (process.platform === 'win32') {
-        try {
-          spawn('cmd', ['/c', 'start', '""', absPath], { detached: true, stdio: 'ignore' }).unref();
-          log('   Opening transcript...', 'cyan');
-        } catch (_) { /* ignore if open fails */ }
-      }
+      // OSC 8 hyperlink — Ctrl+click to open in Windows Terminal
+      process.stdout.write(`   \x1b]8;;${fileUri}\x1b\\${absPath}\x1b]8;;\x1b\\\n`);
 
       debug(`Language: ${transcriptionResult.language} (${(transcriptionResult.language_probability * 100).toFixed(1)}% confidence)`);
       debug(`Device: ${transcriptionResult.device.toUpperCase()}`, transcriptionResult.device === 'cuda' ? 'green' : 'yellow');
