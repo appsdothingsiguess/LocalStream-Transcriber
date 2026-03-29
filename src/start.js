@@ -272,6 +272,14 @@ function shouldSkipInstall(forceReinstall = false) {
 }
 
 async function getGPUStatus() {
+  // --cpu flag or LOCALSTREAM_FORCE_CPU=1 skips the GPU test entirely.
+  // Useful for testing CPU-mode behaviour without a CPU-only machine.
+  const forceCPU = process.argv.includes('--cpu') || process.env.LOCALSTREAM_FORCE_CPU === '1';
+  if (forceCPU) {
+    debug('Force-CPU flag set — skipping GPU test', 'yellow');
+    return { available: false, type: 'CPU (forced)', color: 'cyan', modelSource: null, modelPath: null };
+  }
+
   try {
     // Write GPU test script to temporary file - actually test GPU processing
     const testScript = `import sys
@@ -1783,7 +1791,7 @@ async function main() {
   const modelInfo = WHISPER_MODELS.find(m => m.id === savedModel);
   const cacheNote = modelCached ? '' : `  (${modelInfo?.size ?? '?'} download on first use)`;
 
-  log(`\n✅ Ready · ${deviceLabel} · ${savedModel}${cacheNote}`, 'green');
+  log(`\n✅ Ready ${deviceLabel} ${savedModel}${cacheNote}`, 'green');
   if (cacheNote) log('   Model will be fetched from HuggingFace automatically when you first transcribe.', 'cyan');
   debug(`Processing device: ${gpuStatus.type}`, gpuStatus.color);
   if (gpuStatus.modelSource) debug(`Model source: ${gpuStatus.modelSource}`);

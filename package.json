@@ -10,6 +10,7 @@
     "run": "node src/start.js",
     "setup": "node src/start.js",
     "setup:debug": "node src/start.js --debug",
+    "setup:cpu": "node src/start.js --cpu",
     "setup:install": "node src/start.js -i",
     "fix": "node scripts/fix-dependencies.js"
   },
