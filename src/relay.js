@@ -151,14 +151,15 @@ const jobQueue = new JobQueue();
 
 // --- Setup ---
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const ROOT_DIR = path.join(__dirname, '..'); // project root (parent of src/)
 const app = express();
 const wss = new WebSocketServer({ noServer: true });
 const PORT = 8787;
-const UPLOADS_DIR = path.join(__dirname, 'uploads');
-const TRANSCRIPTIONS_DIR = path.join(__dirname, 'transcriptions');
-const DOWNLOADS_DIR = path.join(__dirname, 'downloads');
+const UPLOADS_DIR = path.join(ROOT_DIR, 'uploads');
+const TRANSCRIPTIONS_DIR = path.join(ROOT_DIR, 'transcriptions');
+const DOWNLOADS_DIR = path.join(ROOT_DIR, 'downloads');
 const PYTHON_SCRIPT = path.join(__dirname, 'transcribe.py');
-const CONFIG_FILE = path.join(__dirname, 'config.json');
+const CONFIG_FILE = path.join(ROOT_DIR, 'config.json');
 
 // Cache for Python executable path
 let pythonExecutable = null;

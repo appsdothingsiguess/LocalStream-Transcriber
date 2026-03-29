@@ -3,15 +3,15 @@
   "version": "1.0.0",
   "description": "MP3 Grabber & Auto-Transcription System",
   "license": "MIT",
-  "main": "relay.js",
+  "main": "src/relay.js",
   "type": "module",
   "scripts": {
-    "start": "node relay.js",
-    "run": "node start.js",
-    "setup": "node start.js",
-    "setup:debug": "node start.js --debug",
-    "setup:install": "node start.js -i",
-    "fix": "node fix-dependencies.js"
+    "start": "node src/relay.js",
+    "run": "node src/start.js",
+    "setup": "node src/start.js",
+    "setup:debug": "node src/start.js --debug",
+    "setup:install": "node src/start.js -i",
+    "fix": "node scripts/fix-dependencies.js"
   },
   "dependencies": {
     "express": "^4.19.2",

@@ -8,17 +8,18 @@ import { fileURLToPath } from 'url';
 import { log, debug, DEBUG, colors } from './logger.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const ROOT_DIR = path.join(__dirname, '..'); // project root (parent of src/)
 const rl = createInterface({
   input: process.stdin,
   output: process.stdout
 });
 
 // Configuration
-const MEDIA_DIR = path.join(__dirname, 'media');
-const TRANSCRIPTIONS_DIR = path.join(__dirname, 'transcriptions');
-const UPLOADS_DIR = path.join(__dirname, 'uploads');
+const MEDIA_DIR = path.join(ROOT_DIR, 'media');
+const TRANSCRIPTIONS_DIR = path.join(ROOT_DIR, 'transcriptions');
+const UPLOADS_DIR = path.join(ROOT_DIR, 'uploads');
 const PYTHON_SCRIPT = path.join(__dirname, 'transcribe.py');
-const CONFIG_FILE = path.join(__dirname, 'config.json');
+const CONFIG_FILE = path.join(ROOT_DIR, 'config.json');
 
 // Resolved Python path (set during prerequisite check)
 let RESOLVED_PYTHON_PATH = null;
@@ -858,7 +859,7 @@ async function checkPrerequisites(forceReinstall = false) {
   }
 
   // Check if package.json exists
-  if (!existsSync(path.join(__dirname, 'package.json'))) {
+  if (!existsSync(path.join(ROOT_DIR, 'package.json'))) {
     log('❌ package.json not found in current directory.', 'red');
     return false;
   }
@@ -866,7 +867,7 @@ async function checkPrerequisites(forceReinstall = false) {
   // Install Node.js dependencies
   log('📦 Installing Node.js dependencies...', 'cyan');
   try {
-    execSync('npm install', { stdio: 'inherit', cwd: __dirname });
+    execSync('npm install', { stdio: 'inherit', cwd: ROOT_DIR });
     log('✅ Node.js dependencies installed successfully', 'green');
   } catch (error) {
     log('❌ Failed to install Node.js dependencies', 'red');
@@ -874,13 +875,13 @@ async function checkPrerequisites(forceReinstall = false) {
   }
 
   // Install Python dependencies from requirements.txt
-  const requirementsPath = path.join(__dirname, 'requirements.txt');
+  const requirementsPath = path.join(ROOT_DIR, 'requirements.txt');
   log('📦 Installing Python dependencies from requirements.txt (this may take a few minutes)...', 'cyan');
   try {
     const pipCmd = getPipCommand();
     debug(`Using pip: ${pipCmd}`);
     if (existsSync(requirementsPath)) {
-      execSync(`${pipCmd} install -r "${requirementsPath}"`, { stdio: 'inherit', cwd: __dirname });
+      execSync(`${pipCmd} install -r "${requirementsPath}"`, { stdio: 'inherit', cwd: ROOT_DIR });
       log('✅ Python dependencies from requirements.txt installed successfully', 'green');
     } else {
       log('   requirements.txt not found, installing faster-whisper only', 'yellow');
