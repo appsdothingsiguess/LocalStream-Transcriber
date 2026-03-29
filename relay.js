@@ -1087,9 +1087,8 @@ wss.on('connection', ws => {
                       const entryId = jobQueue.extractEntryId(url);
                       const baseName = entryId && entryId !== url ? entryId : outputFilename.replace(/\.[^.]+$/, '');
                       const transcriptPath = path.join(TRANSCRIPTIONS_DIR, `${baseName}.txt`);
-                      const fileUrl = `file:///${transcriptPath.replace(/\\/g, '/')}`;
-                      const clickable = `\x1b]8;;${fileUrl}\x1b\\transcriptions/${baseName}.txt\x1b]8;;\x1b\\`;
-                      console.log(`✅   Done → ${clickable}`);
+                      console.log(`✅   Done`);
+                      console.log(`     ${transcriptPath}`);
                       dbg(`Transcription complete for job ${jobId}`);
 
                       const resultMessage = JSON.stringify({
@@ -1261,9 +1260,8 @@ wss.on('connection', ws => {
                   console.log('🎙️   Transcribing...');
                   const transcript = transcribe(localFilePath);
                   const blobTranscriptPath = path.join(TRANSCRIPTIONS_DIR, `${jobId}.txt`);
-                  const blobFileUrl = `file:///${blobTranscriptPath.replace(/\\/g, '/')}`;
-                  const blobClickable = `\x1b]8;;${blobFileUrl}\x1b\\transcriptions/${jobId}.txt\x1b]8;;\x1b\\`;
-                  console.log(`✅   Done → ${blobClickable}`);
+                  console.log(`✅   Done`);
+                  console.log(`     ${blobTranscriptPath}`);
                   dbg(`Transcription complete for job ${jobId}`);
 
                   const resultMessage = JSON.stringify({
@@ -1352,9 +1350,8 @@ wss.on('connection', ws => {
                   console.log('🎙️   Transcribing...');
                   const transcript = transcribe(localFilePath);
                   const urlTranscriptPath = path.join(TRANSCRIPTIONS_DIR, `${jobId}.txt`);
-                  const urlFileUrl = `file:///${urlTranscriptPath.replace(/\\/g, '/')}`;
-                  const urlClickable = `\x1b]8;;${urlFileUrl}\x1b\\transcriptions/${jobId}.txt\x1b]8;;\x1b\\`;
-                  console.log(`✅   Done → ${urlClickable}`);
+                  console.log(`✅   Done`);
+                  console.log(`     ${urlTranscriptPath}`);
                   dbg(`Transcription complete for job ${jobId}`);
 
                   const resultMessage = JSON.stringify({

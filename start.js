@@ -1513,9 +1513,8 @@ async function transcribeFile() {
       const langInfo = `${transcriptionResult.language} ${(transcriptionResult.language_probability * 100).toFixed(0)}%`;
       const outFile = transcriptionResult.output_file ? path.basename(transcriptionResult.output_file) : selectedFile;
       const absPath = transcriptionResult.output_file || path.join(TRANSCRIPTIONS_DIR, outFile);
-      const fileUrl = `file:///${absPath.replace(/\\/g, '/')}`;
-      const clickable = `\x1b]8;;${fileUrl}\x1b\\transcriptions/${outFile}\x1b]8;;\x1b\\`;
-      log(`\n✅  Done → ${clickable}  (${duration}s · ${deviceLabel} · ${langInfo})`, 'green');
+      log(`\n✅  Done  (${duration}s · ${deviceLabel} · ${langInfo})`, 'green');
+      log(`   ${absPath}`, 'cyan');
 
       debug(`Language: ${transcriptionResult.language} (${(transcriptionResult.language_probability * 100).toFixed(1)}% confidence)`);
       debug(`Device: ${transcriptionResult.device.toUpperCase()}`, transcriptionResult.device === 'cuda' ? 'green' : 'yellow');
@@ -1629,6 +1628,8 @@ async function main() {
   const setupConfig = loadConfig();
   if (!setupConfig.installCompleted || forceReinstall) {
     log('⚙️  First-time setup — this may take a few minutes...', 'yellow');
+  } else {
+    log('⏳ Checking setup, please wait...', 'cyan');
   }
 
   // Check prerequisites
