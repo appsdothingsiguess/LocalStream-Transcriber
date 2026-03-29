@@ -896,8 +896,12 @@ wss.on('connection', ws => {
       }
 
       if (type === 'clear_completed') {
-        dbg('Clearing completed job IDs (manual queue request)');
+        // Preserve the ID of any job currently downloading/transcribing so it
+        // stays protected even after the set is cleared.
+        const activeId = jobQueue.currentJob?.entryId;
         jobQueue.completedIds.clear();
+        if (activeId) jobQueue.completedIds.add(activeId);
+        dbg(`Cleared completed IDs (active job protected: ${activeId ?? 'none'})`);
         ws.send(JSON.stringify({ 
           type: 'clear_completed_ack', 
           cleared: true,

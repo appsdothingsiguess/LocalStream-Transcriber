@@ -692,44 +692,24 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       try {
         const activeSocket = await connect();
 
-        // Clear relay's deduplication before re-queueing
-        activeSocket.send(JSON.stringify({ 
-          type: 'clear_completed', 
-          timestamp: Date.now() 
-        }));
-
-        // Give relay time to process clear command
-        await new Promise(resolve => setTimeout(resolve, 100));
-        
         if (activeSocket.readyState !== WebSocket.OPEN) {
           sendResponse({ success: false, error: 'WebSocket not connected' });
           return;
         }
         
-        // Get count of both pending AND recently processed streams
         const pendingCount = pendingStreams.size;
-        const recentlyProcessed = Array.from(processedBaseUrls.entries())
-          .filter(([_, data]) => Date.now() - data.timestamp < 300000); // Last 5 minutes
         
-        const totalCount = pendingCount + recentlyProcessed.length;
-        
-        if (totalCount === 0) {
+        if (pendingCount === 0) {
           sendResponse({ success: true, count: 0 });
           return;
         }
         
-        console.log(`📦 [POPUP] Re-queueing ${recentlyProcessed.length} recently processed streams`);
-        
-        // Flush pending streams
+        // Only flush streams that are currently waiting in the debounce queue.
+        // Do NOT clear relay-side completedIds — that would bypass duplicate protection
+        // and cause already-transcribed streams to be re-downloaded in a loop.
         await flushPendingStreams();
         
-        // Re-queue recently processed streams
-        for (const [streamId, data] of recentlyProcessed) {
-          console.log(`🔄 [POPUP] Re-queueing: ${streamId}`);
-          await sendStreamToRelay(streamId, data.url, [], { source: 'popup-requeue' });
-        }
-        
-        sendResponse({ success: true, count: totalCount });
+        sendResponse({ success: true, count: pendingCount });
       } catch (error) {
         console.error('❌ [POPUP] Error flushing streams:', error);
         sendResponse({ success: false, error: error.message });
@@ -756,13 +736,6 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
           sendResponse({ success: false, error: 'WebSocket not connected' });
           return;
         }
-
-        // Clear relay-side deduplication so re-selecting a previously completed stream still queues.
-        activeSocket.send(JSON.stringify({
-          type: 'clear_completed',
-          timestamp: Date.now()
-        }));
-        await new Promise(resolve => setTimeout(resolve, 100));
 
         let response;
         try {
