@@ -34,6 +34,16 @@ function question(prompt) {
 // CONFIG MANAGEMENT
 // ============================================================================
 
+// Available Whisper models with metadata
+const WHISPER_MODELS = [
+  { id: 'tiny',     desc: 'fastest, lowest accuracy',         size: '~75 MB',   cpuOk: true  },
+  { id: 'base',     desc: 'fast, decent accuracy',             size: '~145 MB',  cpuOk: true  },
+  { id: 'small',    desc: 'balanced speed & accuracy',         size: '~465 MB',  cpuOk: true  },
+  { id: 'medium',   desc: 'good accuracy (recommended GPU)',   size: '~1.5 GB',  cpuOk: false },
+  { id: 'large-v2', desc: 'high accuracy, slow',               size: '~3 GB',    cpuOk: false },
+  { id: 'large-v3', desc: 'best accuracy, slowest',            size: '~3 GB',    cpuOk: false },
+];
+
 function loadConfig() {
   try {
     if (existsSync(CONFIG_FILE)) {
@@ -43,7 +53,7 @@ function loadConfig() {
   } catch (error) {
     log('⚠️  Could not load config file, using defaults', 'yellow');
   }
-  return { installCompleted: false, lastInstallDate: null, version: "1.0.0", PYTHON_PATH: null };
+  return { installCompleted: false, lastInstallDate: null, version: "1.0.0", PYTHON_PATH: null, WHISPER_MODEL: null };
 }
 
 function saveConfig(config) {
@@ -1287,16 +1297,19 @@ if __name__ == "__main__":
     # Check GPU availability first
     gpu_available = check_gpu_availability()
     
-    # Try GPU first if available, otherwise use CPU
-    # Use "medium" model for GPU, "base" model for CPU (better performance on CPU)
+    # Respect user-selected model from config (passed via WHISPER_MODEL env var).
+    # Fall back to safe defaults if not set.
+    chosen_model = os.environ.get('WHISPER_MODEL', None)
+    if not chosen_model:
+        chosen_model = "medium" if gpu_available else "base"
+    
     if gpu_available:
-        result = transcribe_audio(audio_file, model_size="medium", use_gpu=True)
+        result = transcribe_audio(audio_file, model_size=chosen_model, use_gpu=True)
         if not result["success"] and ("CUDA" in result["error"] or "cudnn" in result["error"].lower() or "cublas" in result["error"].lower()):
             # Fallback to CPU if GPU fails
-            result = transcribe_audio(audio_file, model_size="base", use_gpu=False)
+            result = transcribe_audio(audio_file, model_size=chosen_model, use_gpu=False)
     else:
-        # Use CPU directly with base model
-        result = transcribe_audio(audio_file, model_size="base", use_gpu=False)
+        result = transcribe_audio(audio_file, model_size=chosen_model, use_gpu=False)
     
     # Save transcription if successful
     if result["success"]:
@@ -1455,10 +1468,14 @@ async function transcribeFile() {
       const pythonCmd = getPythonCommand();
       const pythonExe = pythonCmd.replace(/^"|"$/g, ''); // Remove quotes for spawn
       
+      const spawnEnv = { ...process.env };
+      const spawnCfg = loadConfig();
+      if (spawnCfg.WHISPER_MODEL) spawnEnv.WHISPER_MODEL = spawnCfg.WHISPER_MODEL;
+
       const pythonProcess = spawn(pythonExe, [PYTHON_SCRIPT, filePath], {
         cwd: __dirname,
         stdio: ['pipe', 'pipe', 'pipe'],
-        env: process.env  // CRITICAL: Pass environment variables including PATH and CUDA paths
+        env: spawnEnv
       });
       
       let shownLoadingModel = false;
@@ -1550,6 +1567,10 @@ async function startRelayServer() {
     relayEnv.MP3GRABBER_PYTHON_PATH = pythonPath;
     debug(`Python for transcription: ${pythonPath}`);
   }
+  if (config.WHISPER_MODEL) {
+    relayEnv.WHISPER_MODEL = config.WHISPER_MODEL;
+    debug(`Whisper model: ${config.WHISPER_MODEL}`);
+  }
   if (DEBUG) {
     relayEnv.LOCALSTREAM_DEBUG = '1';
   }
@@ -1616,6 +1637,97 @@ async function startRelayServer() {
   });
 }
 
+// ─── Model selection ────────────────────────────────────────────────────────
+
+async function selectModel(gpuAvailable, isFirstTime = false) {
+  const recommended = gpuAvailable ? 'medium' : 'base';
+  const config = loadConfig();
+  const current = config.WHISPER_MODEL || recommended;
+
+  log('\n🧠 Whisper model:', 'bright');
+  if (isFirstTime) {
+    log(`   ${gpuAvailable ? 'GPU detected' : 'No GPU — CPU mode'}. Recommended: ${recommended}`, 'cyan');
+  } else {
+    log(`   Currently: ${current}`, 'cyan');
+  }
+  log('');
+
+  WHISPER_MODELS.forEach((m, i) => {
+    const isRec = m.id === recommended;
+    const isCur = !isFirstTime && m.id === current;
+    const tag = isRec ? ' ← recommended' : isCur ? ' ← current' : '';
+    const warn = !m.cpuOk && !gpuAvailable ? colors.yellow + ' ⚠ slow on CPU' + colors.reset : '';
+    log(`   ${i + 1}  ${m.id.padEnd(10)} ${m.desc.padEnd(38)} ${m.size}${tag}${warn}`, isRec || isCur ? 'green' : 'blue');
+  });
+
+  const fallback = isFirstTime ? recommended : current;
+  const input = await question(`\nEnter model number (1–${WHISPER_MODELS.length}), or Enter to keep [${fallback}]: `);
+
+  if (!input.trim()) {
+    log(`✅ Using: ${fallback}`, 'green');
+    return fallback;
+  }
+  const idx = parseInt(input.trim(), 10) - 1;
+  if (idx >= 0 && idx < WHISPER_MODELS.length) {
+    const chosen = WHISPER_MODELS[idx].id;
+    log(`✅ Selected: ${chosen}`, 'green');
+    return chosen;
+  }
+  log(`⚠️  Invalid — keeping: ${fallback}`, 'yellow');
+  return fallback;
+}
+
+// ─── Settings menu ───────────────────────────────────────────────────────────
+
+async function showSettings(gpuStatus) {
+  while (true) {
+    const config = loadConfig();
+    const model = config.WHISPER_MODEL || (gpuStatus.available ? 'medium' : 'base');
+
+    log('\n' + '='.repeat(50), 'bright');
+    log('  ⚙️   Settings', 'bright');
+    log('='.repeat(50), 'bright');
+    log(`  1  Change Whisper model      (current: ${model})`, 'blue');
+    log(`  2  Debug mode info`, 'blue');
+    log('  3  Force reinstall', 'blue');
+    log('  4  Back', 'blue');
+
+    const choice = await question('\nEnter your choice (1-4): ');
+
+    switch (choice.trim()) {
+      case '1': {
+        const newModel = await selectModel(gpuStatus.available, false);
+        const cfg = loadConfig();
+        cfg.WHISPER_MODEL = newModel;
+        saveConfig(cfg);
+        log(`✅ Model saved: ${newModel}`, 'green');
+        break;
+      }
+      case '2':
+        log('\n💡 Debug mode shows all internal logs.', 'cyan');
+        log('   Start with:  npm run setup:debug', 'bright');
+        log('   Or set env:  LOCALSTREAM_DEBUG=1', 'cyan');
+        break;
+      case '3': {
+        const cfg = loadConfig();
+        cfg.installCompleted = false;
+        saveConfig(cfg);
+        log('\n🔄 Reinstall flag set. Restart the app to run full setup again.', 'yellow');
+        log('   Exiting now...', 'cyan');
+        rl.close();
+        process.exit(0);
+        break;
+      }
+      case '4':
+        return;
+      default:
+        log('❌ Invalid choice. Enter 1–4.', 'red');
+    }
+  }
+}
+
+// ─── Main ────────────────────────────────────────────────────────────────────
+
 async function main() {
   log('LocalStream – Private Lecture Transcriber', 'bright');
   log('==========================================', 'bright');
@@ -1629,7 +1741,8 @@ async function main() {
 
   // Show first-run message before setup begins
   const setupConfig = loadConfig();
-  if (!setupConfig.installCompleted || forceReinstall) {
+  const isFirstTime = !setupConfig.installCompleted || forceReinstall;
+  if (isFirstTime) {
     log('⚙️  First-time setup — this may take a few minutes...', 'yellow');
   } else {
     log('⏳ Checking setup, please wait...', 'cyan');
@@ -1643,24 +1756,37 @@ async function main() {
     process.exit(1);
   }
 
-  // Compact ready line
   const gpuStatus = prerequisitesResult.gpuStatus;
+
+  // First-time setup: ask user to pick their Whisper model
+  if (isFirstTime) {
+    const chosenModel = await selectModel(gpuStatus.available, true);
+    const cfg = loadConfig();
+    cfg.WHISPER_MODEL = chosenModel;
+    saveConfig(cfg);
+  }
+
+  // Compact ready line — show the saved model
+  const activeConfig = loadConfig();
+  const savedModel = activeConfig.WHISPER_MODEL || (gpuStatus.available ? 'medium' : 'base');
   const deviceLabel = gpuStatus.available ? 'GPU (CUDA)' : 'CPU';
-  const modelLabel = gpuStatus.available ? 'medium model' : 'base model';
-  log(`\n✅  Ready  ·  ${deviceLabel}  ·  ${modelLabel}`, 'green');
+  log(`\n✅  Ready  ·  ${deviceLabel}  ·  ${savedModel}`, 'green');
   debug(`Processing device: ${gpuStatus.type}`, gpuStatus.color);
   if (gpuStatus.modelSource) debug(`Model source: ${gpuStatus.modelSource}`);
   if (gpuStatus.modelPath) debug(`Model path: ${gpuStatus.modelPath}`);
 
   // Main menu
   while (true) {
+    const menuConfig = loadConfig();
+    const menuModel = menuConfig.WHISPER_MODEL || savedModel;
     log('\n' + '='.repeat(50), 'bright');
     log('  1  Transcribe a file     (media/ folder)', 'blue');
     log('  2  Browser extension     (Canvas · Panopto · YouTube)', 'blue');
-    log('  3  Exit', 'blue');
-    
-    const choice = await question('\nEnter your choice (1-3): ');
-    
+    log(`  3  Settings              (model: ${menuModel})`, 'blue');
+    log('  4  Exit', 'blue');
+
+    const choice = await question('\nEnter your choice (1-4): ');
+
     switch (choice.trim()) {
       case '1':
         await transcribeFile();
@@ -1669,12 +1795,15 @@ async function main() {
         await startRelayServer();
         break;
       case '3':
+        await showSettings(gpuStatus);
+        break;
+      case '4':
         log('\n👋 Goodbye!', 'green');
         rl.close();
         process.exit(0);
         break;
       default:
-        log('❌ Invalid choice. Please enter 1, 2, or 3.', 'red');
+        log('❌ Invalid choice. Please enter 1–4.', 'red');
     }
   }
 }

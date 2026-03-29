@@ -546,6 +546,15 @@ function transcribe(file, forceCPU = false) {
             if (forceCPU) {
                 pythonEnv.FORCE_CPU = '1';
             }
+            // Whisper model — use whatever the user selected in settings (passed from
+            // start.js when launching the relay, or read directly from config here as
+            // a fallback when relay is started standalone).
+            if (!pythonEnv.WHISPER_MODEL) {
+                try {
+                    const cfg = JSON.parse(readFileSync(CONFIG_FILE, 'utf8'));
+                    if (cfg.WHISPER_MODEL) pythonEnv.WHISPER_MODEL = cfg.WHISPER_MODEL;
+                } catch (_) { /* config not readable — Python will auto-select */ }
+            }
             // Windows: reduce ONNX/OpenMP crashes during model load (faster-whisper#1169, #967)
             if (process.platform === 'win32') {
                 pythonEnv.ORT_DISABLE_CPU_AFFINITY = '1';
