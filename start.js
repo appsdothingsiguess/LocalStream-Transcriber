@@ -1512,7 +1512,7 @@ async function transcribeFile() {
       const deviceLabel = transcriptionResult.device === 'cuda' ? 'GPU' : 'CPU';
       const langInfo = `${transcriptionResult.language} ${(transcriptionResult.language_probability * 100).toFixed(0)}%`;
       const outFile = transcriptionResult.output_file ? path.basename(transcriptionResult.output_file) : selectedFile;
-      const absPath = transcriptionResult.output_file || path.join(TRANSCRIPTIONS_DIR, outFile);
+      const absPath = path.resolve(transcriptionResult.output_file || path.join(TRANSCRIPTIONS_DIR, outFile));
       log(`\n✅  Done  (${duration}s · ${deviceLabel} · ${langInfo})`, 'green');
       log(`   ${absPath}`, 'cyan');
 
