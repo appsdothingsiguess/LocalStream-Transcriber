@@ -11,13 +11,6 @@ from faster_whisper.utils import download_model
 # Suppress warnings for cleaner output
 warnings.filterwarnings("ignore", category=UserWarning)
 
-def _sidecar_path(audio_file):
-    """Path for the JSON sidecar that persists transcription results to disk."""
-    return os.path.join(
-        os.path.dirname(audio_file),
-        os.path.splitext(os.path.basename(audio_file))[0] + ".transcribe_result.json"
-    )
-
 def transcribe_audio(audio_file, model_size="medium", use_gpu=True):
     """Transcribe audio file using faster-whisper"""
     try:
@@ -82,8 +75,8 @@ def transcribe_audio(audio_file, model_size="medium", use_gpu=True):
                 print(f"STATUS:Processed {segment_count} segments...", flush=True)
         
         print(f"STATUS:Transcription complete!", flush=True)
-
-        result = {
+        
+        return {
             "success": True,
             "transcript": transcript_text.strip(),
             "language": info.language,
@@ -95,40 +88,6 @@ def transcribe_audio(audio_file, model_size="medium", use_gpu=True):
             "resolved_model_path": resolved_model_path,
             "segment_count": segment_count
         }
-
-        # CRITICAL: Emit the full result to stdout IMMEDIATELY.
-        # A background CUDA thread can crash the process at any moment after
-        # the last segment.  stdout is captured by Node's execSync even on
-        # crash, making this the most reliable way to persist the data.
-        try:
-            sys.stdout.write("RESULT_JSON:" + json.dumps(result) + "\n")
-            sys.stdout.flush()
-        except Exception:
-            pass
-
-        # Secondary backup: persist to sidecar JSON on disk with fsync.
-        try:
-            sp = _sidecar_path(audio_file)
-            with open(sp, "w", encoding="utf-8") as f:
-                f.write(json.dumps(result))
-                f.flush()
-                os.fsync(f.fileno())
-            print("RESULT:SUCCESS", flush=True)
-        except Exception:
-            pass
-
-        # Save the .txt transcription file while model is still alive.
-        try:
-            out = save_transcription(
-                transcript_text.strip(), audio_file, device, compute_type,
-                info.language, info.language_probability, model_size
-            )
-            if out:
-                result["output_file"] = out
-        except Exception:
-            pass
-
-        return result
         
     except Exception as e:
         error_msg = str(e)
@@ -228,15 +187,18 @@ if __name__ == "__main__":
         # Use CPU directly with base model
         result = transcribe_audio(audio_file, model_size="base", use_gpu=False)
     
-    # save_transcription() is now called inside transcribe_audio() so the .txt
-    # file is written before the model destructor can crash the process.
-
-    print(json.dumps(result), flush=True)
-    sys.stdout.flush()
-    sys.stderr.flush()
-
-    # Hard-exit to skip Python interpreter teardown.  CUDA/CTranslate2 DLL
-    # unload during normal exit triggers STATUS_STACK_BUFFER_OVERRUN (0xC0000409)
-    # on Windows.  The RESULT_JSON line and sidecar written inside
-    # transcribe_audio() ensure Node can recover even if this is bypassed.
-    os._exit(0)
+    # Save transcription if successful
+    if result["success"]:
+        output_file = save_transcription(
+            result["transcript"], 
+            audio_file, 
+            result["device"], 
+            result["compute_type"],
+            result["language"],
+            result["language_probability"],
+            result["model_size"]
+        )
+        if output_file:
+            result["output_file"] = output_file
+    
+    print(json.dumps(result))
