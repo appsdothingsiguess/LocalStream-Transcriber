@@ -176,16 +176,19 @@ if __name__ == "__main__":
     # Check GPU availability first
     gpu_available = check_gpu_availability()
     
-    # Try GPU first if available, otherwise use CPU
-    # Use "medium" model for GPU, "base" model for CPU (better performance on CPU)
+    # Respect user-selected model from config (passed via WHISPER_MODEL env var).
+    # Fall back to safe defaults if not set.
+    chosen_model = os.environ.get('WHISPER_MODEL', None)
+    if not chosen_model:
+        chosen_model = "medium" if gpu_available else "base"
+    
     if gpu_available:
-        result = transcribe_audio(audio_file, model_size="medium", use_gpu=True)
+        result = transcribe_audio(audio_file, model_size=chosen_model, use_gpu=True)
         if not result["success"] and ("CUDA" in result["error"] or "cudnn" in result["error"].lower() or "cublas" in result["error"].lower()):
             # Fallback to CPU if GPU fails
-            result = transcribe_audio(audio_file, model_size="base", use_gpu=False)
+            result = transcribe_audio(audio_file, model_size=chosen_model, use_gpu=False)
     else:
-        # Use CPU directly with base model
-        result = transcribe_audio(audio_file, model_size="base", use_gpu=False)
+        result = transcribe_audio(audio_file, model_size=chosen_model, use_gpu=False)
     
     # Save transcription if successful
     if result["success"]:

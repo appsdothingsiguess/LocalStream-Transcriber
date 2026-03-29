@@ -1333,7 +1333,7 @@ if __name__ == "__main__":
 `;
 
   writeFileSync(PYTHON_SCRIPT, pythonScript);
-  log('✅ Python transcription script created', 'green');
+  debug('Python transcription script created', 'green');
 }
 
 async function verifyGPUInstallation() {
@@ -1783,7 +1783,7 @@ async function main() {
   const modelInfo = WHISPER_MODELS.find(m => m.id === savedModel);
   const cacheNote = modelCached ? '' : `  (${modelInfo?.size ?? '?'} download on first use)`;
 
-  log(`\n✅  Ready  ·  ${deviceLabel}  ·  ${savedModel}${cacheNote}`, 'green');
+  log(`\n✅ Ready · ${deviceLabel} · ${savedModel}${cacheNote}`, 'green');
   if (cacheNote) log('   Model will be fetched from HuggingFace automatically when you first transcribe.', 'cyan');
   debug(`Processing device: ${gpuStatus.type}`, gpuStatus.color);
   if (gpuStatus.modelSource) debug(`Model source: ${gpuStatus.modelSource}`);
