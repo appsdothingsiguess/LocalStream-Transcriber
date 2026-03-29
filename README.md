@@ -20,22 +20,37 @@
 
 ---
 
+## Technical overview
+
+The app uses **[faster-whisper](https://github.com/SYSTRAN/faster-whisper)** (OpenAI Whisper, optimized) for speech-to-text, with optional NVIDIA GPU acceleration.
+
+- 🎯 **Local & web-based transcription** — process files from disk or capture from web pages
+- 🌊 **HLS/DASH stream support** — automatically detects and downloads `.m3u8` and `.mpd` streams
+- 🔐 **Authenticated content** — captures session cookies for Canvas, Kaltura, Panopto
+- ⚡ **GPU acceleration** — 4× faster with NVIDIA CUDA; automatic CPU fallback
+- 🌐 **Browser extension** — Chrome extension (Manifest V3) with passive network interception
+- 📊 **Real-time progress** — live WebSocket updates at `http://localhost:8787`
+- 🔒 **100% local** — all processing happens on your machine
+- 🎬 **Multi-format** — audio (MP3, M4A, WAV, FLAC, OGG, WebM) and video (MP4, MKV, AVI)
+- 📝 **Timestamped output** — `[MM:SS.mmm]` format with language and confidence metadata
+
+---
+
 ## Table of contents
 
 1. [Start here (students)](#start-here-students)
 2. [Quick start (Windows)](#quick-start-windows)
 3. [Downloads and releases](#downloads-and-releases)
-4. [Technical overview](#technical-overview)
-5. [How it works](#how-it-works)
-6. [Configuration](#configuration)
-7. [Supported formats](#supported-audio--video-formats)
-8. [Architecture & file structure](#architecture--file-structure)
-9. [Troubleshooting](#troubleshooting)
-10. [Output format](#transcription-output-format)
-11. [Dependencies](#dependencies)
-12. [Manual commands](#manual-commands-advanced)
-13. [Security & privacy](#security--privacy)
-14. [License](#license)
+4. [How it works](#how-it-works)
+5. [Configuration](#configuration)
+6. [Supported formats](#supported-audio--video-formats)
+7. [Architecture & file structure](#architecture--file-structure)
+8. [Troubleshooting](#troubleshooting)
+9. [Output format](#transcription-output-format)
+10. [Dependencies](#dependencies)
+11. [Manual commands](#manual-commands-advanced)
+12. [Security & privacy](#security--privacy)
+13. [License](#license)
 
 ---
 
@@ -178,22 +193,6 @@ git push origin v1.0.2
 Then open **Releases → Draft a new release**, select the tag, add notes, publish.
 
 > **Tip:** Bump `version` in `package.json` to match the tag (e.g. `1.0.2` with tag `v1.0.2`).
-
----
-
-## Technical overview
-
-The app uses **[faster-whisper](https://github.com/SYSTRAN/faster-whisper)** (OpenAI Whisper, optimized) for speech-to-text, with optional NVIDIA GPU acceleration.
-
-- 🎯 **Local & web-based transcription** — process files from disk or capture from web pages
-- 🌊 **HLS/DASH stream support** — automatically detects and downloads `.m3u8` and `.mpd` streams
-- 🔐 **Authenticated content** — captures session cookies for Canvas, Kaltura, Panopto
-- ⚡ **GPU acceleration** — 4× faster with NVIDIA CUDA; automatic CPU fallback
-- 🌐 **Browser extension** — Chrome extension (Manifest V3) with passive network interception
-- 📊 **Real-time progress** — live WebSocket updates at `http://localhost:8787`
-- 🔒 **100% local** — all processing happens on your machine
-- 🎬 **Multi-format** — audio (MP3, M4A, WAV, FLAC, OGG, WebM) and video (MP4, MKV, AVI)
-- 📝 **Timestamped output** — `[MM:SS.mmm]` format with language and confidence metadata
 
 ---
 
