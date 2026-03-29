@@ -65,17 +65,50 @@ Results land in **`transcriptions/`** as plain `.txt` files with timestamps like
 
 **Install once:** [Node.js (LTS)](https://nodejs.org/) and [Python 3.10–3.12](https://www.python.org/downloads/) — during Python setup on Windows, check **"Add python.exe to PATH"**.
 
+### Option 1 — Transcribe a file you already have
+
 | Step | What to do |
 |:---:|:---|
 | 1 | **Get the app:** [Latest release ZIP](https://github.com/appsdothingsiguess/LocalStream-Transcriber/releases/latest) or **Code → Download ZIP** on GitHub, then unzip (e.g. `Documents\LocalStream-Transcriber`). |
 | 2 | **Run it:** Double-click **`START.bat`**. *(Fallback: open Command Prompt in the folder and type `npm run setup`.)* The first run installs speech tools — this can take a few minutes. |
-| 3 | **Set your model** (before transcribing — see below). |
-| 4 | **Pick a mode:** **Option 1** — put audio/video in **`media/`** and transcribe. **Option 2** — browser helper for Canvas / Panopto / YouTube (install extension next). |
-| 5 | **Chrome extension (option 2 only):** Go to `chrome://extensions/` → turn on **Developer mode** → **Load unpacked** → select the **`extension/`** folder. |
-| 6 | **Progress & files:** Open **`http://localhost:8787`**. Finished transcripts appear in **`transcriptions/`**. |
+| 3 | **Set your model** (before transcribing — see [Choosing your Whisper model](#choosing-your-whisper-model) below). |
+| 4 | **Drop your file:** Put your audio/video (`.mp3`, `.mp4`, `.m4a`, etc.) in the **`media/`** folder. |
+| 5 | **Pick option 1** in the menu, then select your file from the list. |
+| 6 | **Get your transcript:** Find the `.txt` file in **`transcriptions/`** when it finishes. |
 
 > **No dedicated GPU?** CPU works fine; it will just take longer.
-> **Privacy:** All speech-to-text runs on your laptop.
+
+---
+
+### Option 2 — Capture a live Canvas / Panopto / YouTube lecture
+
+This mode runs a local server that your browser sends streams to. Two parts: **one-time extension setup**, then **per-lecture usage**.
+
+#### Part A — One-time setup
+
+| Step | What to do |
+|:---:|:---|
+| 1 | **Get the app and run it:** Same as steps 1–2 above. |
+| 2 | **Pick option 2** in the menu. This starts the local relay server. Leave this window open — it must stay running while you transcribe. |
+| 3 | **Load the Chrome extension:** Open a new tab and go to `chrome://extensions/`. Turn on **Developer mode** (top-right toggle). Click **Load unpacked** and select the **`extension/`** folder inside the project. |
+| 4 | **Pin the extension:** Click the puzzle-piece icon in Chrome's toolbar → click the pin icon next to **MP3 Sniper** so it shows in your toolbar permanently. |
+
+#### Part B — Transcribing a lecture (every time)
+
+| Step | What to do |
+|:---:|:---|
+| 1 | Make sure **`START.bat`** is already running with option 2 (the relay server). |
+| 2 | Open your lecture page in Chrome (Canvas, Panopto, YouTube, etc.) and **start playing the video** — even a second or two is enough for the extension to detect the stream. |
+| 3 | Click the **MP3 Sniper extension icon** in your Chrome toolbar (the 🎵 icon). A small popup appears. |
+| 4 | Click **"Queue All Videos"** (green button). The extension sends the stream to the local relay for download and transcription. |
+| 5 | Open **`http://localhost:8787`** in a new tab to watch live progress. |
+| 6 | When done, your transcript is saved under **`transcriptions/`** as a `.txt` file with timestamps like `[00:01.234]`. |
+
+> **Canvas specifically:** If "Queue All Videos" doesn't pick up the lecture, try the blue **"Select 1 Video (Canvas)"** button instead — it targets the video element directly.
+>
+> **Keyboard shortcut:** Press **`Ctrl+Shift+M`** anywhere on the page as an alternative to clicking the popup.
+>
+> **Privacy:** All speech-to-text runs on your laptop — nothing is uploaded.
 
 ### Choosing your Whisper model
 
