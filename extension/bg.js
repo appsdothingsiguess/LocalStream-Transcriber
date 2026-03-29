@@ -1,6 +1,16 @@
 const WS_URL = "ws://localhost:8787";
 let sock;
 
+/**
+ * Convert any thrown value into a user-facing string.
+ * WebSocket failures throw an Event object (no .message), not a real Error.
+ */
+function friendlyError(err) {
+  if (err && typeof err.message === 'string' && err.message) return err.message;
+  // WebSocket error / close events have a `type` but no message
+  return 'LocalStream server is not running. Open START.bat and choose option 2 (Browser extension), then try again.';
+}
+
 // Establishes a WebSocket connection if one is not already open.
 // Returns a promise that resolves with the open socket.
 function connect() {
@@ -265,7 +275,7 @@ async function sendStreamToRelay(streamId, url, cookies, details) {
     try {
       activeSocket = await connect();
     } catch (error) {
-      console.error('❌ [FILTER] Failed to connect to relay server:', error);
+      console.log('ℹ️  [FILTER] Relay not reachable — stream buffered, will retry on next detection');
       return;
     }
     
@@ -593,20 +603,10 @@ chrome.commands.onCommand.addListener(async (cmd) => {
 });
 
 // Establish connection on extension load
-console.log('=' .repeat(70));
-console.log('🎵 MP3 Grabber: Background script loaded');
-console.log('🔍 Intelligent Stream Filtering: ACTIVE');
-console.log('📊 Filters:');
-console.log('   - Ignoring: .vtt, .srt, .key, .png, .jpg');
-console.log('   - Ignoring: segment, fragment, caption URLs');
-console.log('   - Prioritizing: master.m3u8, index.m3u8');
-console.log('   - Debounce: 2-second wait for better streams');
-console.log('=' .repeat(70));
-console.log('🔌 Establishing WebSocket connection...');
-connect().catch(err => {
-  console.error('❌ Initial connection failed:', err);
-  console.log('🔄 Will retry when stream is detected');
-});
+console.log('🎵 MP3 Grabber: Background script loaded — stream filtering active');
+// Do NOT auto-connect here. The relay server may not be running yet.
+// Connection is established on demand when a stream is detected or the
+// user clicks a popup button.
 
 // Handle popup messages
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
@@ -618,7 +618,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         const activeSocket = await connect();
         
         if (activeSocket.readyState !== WebSocket.OPEN) {
-          sendResponse({ success: false, error: 'WebSocket not connected' });
+          sendResponse({ success: false, error: 'LocalStream server is not running. Open START.bat and choose option 2 (Browser extension), then try again.' });
           return;
         }
         
@@ -678,7 +678,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         sendResponse({ success: true, count: count });
       } catch (error) {
         console.error('❌ [POPUP] Error queuing videos:', error);
-        sendResponse({ success: false, error: error.message });
+        sendResponse({ success: false, error: friendlyError(error) });
       }
     })();
     
@@ -693,7 +693,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         const activeSocket = await connect();
 
         if (activeSocket.readyState !== WebSocket.OPEN) {
-          sendResponse({ success: false, error: 'WebSocket not connected' });
+          sendResponse({ success: false, error: 'LocalStream server is not running. Open START.bat and choose option 2 (Browser extension), then try again.' });
           return;
         }
         
@@ -727,7 +727,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         sendResponse({ success: true, count: totalCount });
       } catch (error) {
         console.error('❌ [POPUP] Error flushing streams:', error);
-        sendResponse({ success: false, error: error.message });
+        sendResponse({ success: false, error: friendlyError(error) });
       }
     })();
     
@@ -748,7 +748,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       try {
         const activeSocket = await connect();
         if (activeSocket.readyState !== WebSocket.OPEN) {
-          sendResponse({ success: false, error: 'WebSocket not connected' });
+          sendResponse({ success: false, error: 'LocalStream server is not running. Open START.bat and choose option 2 (Browser extension), then try again.' });
           return;
         }
 
@@ -813,7 +813,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         sendResponse({ success: true, count: 1, mode: 'fallback-stream' });
       } catch (error) {
         console.error('❌ [POPUP] Error queueing single selected video:', error);
-        sendResponse({ success: false, error: error.message });
+        sendResponse({ success: false, error: friendlyError(error) });
       }
     })();
 
