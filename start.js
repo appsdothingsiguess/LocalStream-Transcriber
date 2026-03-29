@@ -1512,7 +1512,10 @@ async function transcribeFile() {
       const deviceLabel = transcriptionResult.device === 'cuda' ? 'GPU' : 'CPU';
       const langInfo = `${transcriptionResult.language} ${(transcriptionResult.language_probability * 100).toFixed(0)}%`;
       const outFile = transcriptionResult.output_file ? path.basename(transcriptionResult.output_file) : selectedFile;
-      log(`\n✅  Done → transcriptions/${outFile}  (${duration}s · ${deviceLabel} · ${langInfo})`, 'green');
+      const absPath = transcriptionResult.output_file || path.join(TRANSCRIPTIONS_DIR, outFile);
+      const fileUrl = `file:///${absPath.replace(/\\/g, '/')}`;
+      const clickable = `\x1b]8;;${fileUrl}\x1b\\transcriptions/${outFile}\x1b]8;;\x1b\\`;
+      log(`\n✅  Done → ${clickable}  (${duration}s · ${deviceLabel} · ${langInfo})`, 'green');
 
       debug(`Language: ${transcriptionResult.language} (${(transcriptionResult.language_probability * 100).toFixed(1)}% confidence)`);
       debug(`Device: ${transcriptionResult.device.toUpperCase()}`, transcriptionResult.device === 'cuda' ? 'green' : 'yellow');

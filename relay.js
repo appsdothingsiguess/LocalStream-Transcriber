@@ -75,7 +75,11 @@ class JobQueue {
     job.entryId = entryId;
     
     if (this.isDuplicate(entryId)) {
-      console.log(`⏭️  Skipped (${entryId || 'unknown'} — already queued this session)`);
+      const id = entryId || 'unknown';
+      let reason = 'already done this session';
+      if (this.currentJob?.entryId === entryId) reason = 'already downloading';
+      else if (this.queue.some(j => j.entryId === entryId)) reason = 'already queued';
+      console.log(`⏭️  Duplicate ignored (${id} — ${reason})`);
       return false;
     }
     
@@ -1082,7 +1086,10 @@ wss.on('connection', ws => {
                       // Derive a friendly filename for the done message
                       const entryId = jobQueue.extractEntryId(url);
                       const baseName = entryId && entryId !== url ? entryId : outputFilename.replace(/\.[^.]+$/, '');
-                      console.log(`✅   Done → transcriptions/${baseName}.txt`);
+                      const transcriptPath = path.join(TRANSCRIPTIONS_DIR, `${baseName}.txt`);
+                      const fileUrl = `file:///${transcriptPath.replace(/\\/g, '/')}`;
+                      const clickable = `\x1b]8;;${fileUrl}\x1b\\transcriptions/${baseName}.txt\x1b]8;;\x1b\\`;
+                      console.log(`✅   Done → ${clickable}`);
                       dbg(`Transcription complete for job ${jobId}`);
 
                       const resultMessage = JSON.stringify({
@@ -1253,7 +1260,10 @@ wss.on('connection', ws => {
                   // Transcribe
                   console.log('🎙️   Transcribing...');
                   const transcript = transcribe(localFilePath);
-                  console.log(`✅   Done → transcriptions/${jobId}.txt`);
+                  const blobTranscriptPath = path.join(TRANSCRIPTIONS_DIR, `${jobId}.txt`);
+                  const blobFileUrl = `file:///${blobTranscriptPath.replace(/\\/g, '/')}`;
+                  const blobClickable = `\x1b]8;;${blobFileUrl}\x1b\\transcriptions/${jobId}.txt\x1b]8;;\x1b\\`;
+                  console.log(`✅   Done → ${blobClickable}`);
                   dbg(`Transcription complete for job ${jobId}`);
 
                   const resultMessage = JSON.stringify({
@@ -1341,7 +1351,10 @@ wss.on('connection', ws => {
                   // Transcribe
                   console.log('🎙️   Transcribing...');
                   const transcript = transcribe(localFilePath);
-                  console.log(`✅   Done → transcriptions/${jobId}.txt`);
+                  const urlTranscriptPath = path.join(TRANSCRIPTIONS_DIR, `${jobId}.txt`);
+                  const urlFileUrl = `file:///${urlTranscriptPath.replace(/\\/g, '/')}`;
+                  const urlClickable = `\x1b]8;;${urlFileUrl}\x1b\\transcriptions/${jobId}.txt\x1b]8;;\x1b\\`;
+                  console.log(`✅   Done → ${urlClickable}`);
                   dbg(`Transcription complete for job ${jobId}`);
 
                   const resultMessage = JSON.stringify({

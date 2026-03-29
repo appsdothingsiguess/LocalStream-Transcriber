@@ -291,6 +291,29 @@ mp3grabber/
 
 ## Troubleshooting
 
+### Debug mode
+
+If something isn't working and you need to see what the app is doing internally, run:
+
+```bash
+npm run setup:debug
+```
+
+This shows all hidden log lines prefixed with `[DBG]` — Python paths, GPU test details, queue internals, raw yt-dlp output, and more. Share this output when reporting issues.
+
+**Normal output** (no flag) shows only what students need:
+```
+✅  Ready  ·  GPU (CUDA)  ·  medium model
+📡  Stream detected  (1_9i988two)
+⬇️   Downloading...
+🎙️   Transcribing...
+✅  Done → transcriptions/1_9i988two.txt
+```
+
+**`⏭️ Duplicate ignored`** means the extension sent the same stream twice — this is normal. The first copy is still downloading/transcribing.
+
+---
+
 ### Common issues
 
 **"Python not found"**
