@@ -697,19 +697,34 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
           return;
         }
         
+        // Streams waiting in the debounce queue
         const pendingCount = pendingStreams.size;
-        
-        if (pendingCount === 0) {
+
+        // Streams the sniffer already sent (or tried to send) in the last 5 minutes.
+        // We re-send these so the relay can decide: if it already transcribed them it
+        // will silently reject via completedIds (no loop); if the relay is fresh or
+        // never received them it will queue them normally.
+        // We do NOT send clear_completed — that was the root cause of the loop.
+        const recentlyDetected = Array.from(processedBaseUrls.entries())
+          .filter(([_, data]) => Date.now() - data.timestamp < 300000);
+
+        const totalCount = pendingCount + recentlyDetected.length;
+
+        if (totalCount === 0) {
           sendResponse({ success: true, count: 0 });
           return;
         }
-        
-        // Only flush streams that are currently waiting in the debounce queue.
-        // Do NOT clear relay-side completedIds — that would bypass duplicate protection
-        // and cause already-transcribed streams to be re-downloaded in a loop.
+
+        // Flush debounce queue first
         await flushPendingStreams();
+
+        // Re-offer recently detected streams to the relay (relay deduplicates)
+        for (const [streamId, data] of recentlyDetected) {
+          console.log(`🔄 [POPUP] Re-offering to relay: ${streamId}`);
+          await sendStreamToRelay(streamId, data.url, [], { source: 'popup-requeue' });
+        }
         
-        sendResponse({ success: true, count: pendingCount });
+        sendResponse({ success: true, count: totalCount });
       } catch (error) {
         console.error('❌ [POPUP] Error flushing streams:', error);
         sendResponse({ success: false, error: error.message });
