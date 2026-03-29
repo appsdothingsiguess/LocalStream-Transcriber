@@ -5,6 +5,7 @@ import { existsSync, mkdirSync, readdirSync, writeFileSync, readFileSync } from 
 import { execSync, spawn } from 'child_process';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { log, debug, DEBUG, colors } from './logger.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const rl = createInterface({
@@ -21,22 +22,6 @@ const CONFIG_FILE = path.join(__dirname, 'config.json');
 
 // Resolved Python path (set during prerequisite check)
 let RESOLVED_PYTHON_PATH = null;
-
-// Colors for console output
-const colors = {
-  reset: '\x1b[0m',
-  bright: '\x1b[1m',
-  red: '\x1b[31m',
-  green: '\x1b[32m',
-  yellow: '\x1b[33m',
-  blue: '\x1b[34m',
-  magenta: '\x1b[35m',
-  cyan: '\x1b[36m'
-};
-
-function log(message, color = 'reset') {
-  console.log(`${colors[color]}${message}${colors.reset}`);
-}
 
 function question(prompt) {
   return new Promise((resolve) => {
@@ -80,7 +65,7 @@ function saveConfig(config) {
  */
 function resolvePythonPath(candidateCommand = 'python') {
   try {
-    log(`🔍 Resolving Python path from: ${candidateCommand}`, 'cyan');
+    debug(`Resolving Python path from: ${candidateCommand}`);
     
     // Try to get absolute path using sys.executable
     const resolvedPath = execSync(
@@ -97,7 +82,7 @@ function resolvePythonPath(candidateCommand = 'python') {
       throw new Error(`Resolved path does not exist: ${resolvedPath}`);
     }
     
-    log(`✅ Resolved Python path: ${resolvedPath}`, 'green');
+    debug(`Resolved Python path: ${resolvedPath}`, 'green');
     return resolvedPath;
     
   } catch (error) {
@@ -120,7 +105,7 @@ function resolvePythonPath(candidateCommand = 'python') {
  */
 function validatePythonPath(pythonPath) {
   try {
-    log(`🔍 Validating Python path can import faster_whisper...`, 'cyan');
+    debug(`Validating Python path can import faster_whisper...`);
     
     execSync(
       `"${pythonPath}" -c "import faster_whisper; print('OK')"`,
@@ -131,7 +116,7 @@ function validatePythonPath(pythonPath) {
       }
     );
     
-    log(`✅ Python path validated - faster_whisper accessible`, 'green');
+    debug(`Python path validated - faster_whisper accessible`, 'green');
     return true;
     
   } catch (error) {
@@ -188,7 +173,7 @@ function detectAndLockPythonPath() {
     }
     
     // Lock the path
-    log(`🔒 Locked Python Path: ${pythonPath}`, 'green');
+    debug(`Locked Python path: ${pythonPath}`, 'green');
     
     // Save to config
     const config = loadConfig();
@@ -219,7 +204,7 @@ function getPythonPath() {
         timeout: 5000
       });
       
-      log(`✅ Using locked Python path: ${config.PYTHON_PATH}`, 'green');
+      debug(`Using locked Python path: ${config.PYTHON_PATH}`, 'green');
       return config.PYTHON_PATH;
     } catch (error) {
       log(`⚠️  Saved Python path invalid, re-detecting...`, 'yellow');
@@ -246,7 +231,7 @@ function getPythonCommand() {
   }
   
   // Last resort: use generic command
-  log('⚠️  Using generic Python command (path not resolved)', 'yellow');
+  debug('Using generic Python command (path not resolved)', 'yellow');
   return 'python';
 }
 
@@ -267,8 +252,8 @@ function shouldSkipInstall(forceReinstall = false) {
   
   const config = loadConfig();
   if (config.installCompleted) {
-    log('✅ Previous installation detected, skipping install checks', 'green');
-    log(`   Last install: ${config.lastInstallDate || 'Unknown'}`, 'cyan');
+    debug('Previous installation detected, skipping install checks', 'green');
+    debug(`Last install: ${config.lastInstallDate || 'Unknown'}`);
     return true;
   }
   
@@ -344,7 +329,7 @@ except Exception as e:
     fs.writeFileSync(tempScriptPath, testScript);
     
     try {
-      log('🔍 Testing GPU (loading model on CUDA)...', 'cyan');
+      debug('Testing GPU (loading model on CUDA)...');
       let result;
       const pythonCmd = getPythonCommand();
       try {
@@ -365,7 +350,7 @@ except Exception as e:
       const output = result.toString();
       const lines = output.replace(/\r/g, '').trim().split('\n');
       
-      // Log all output for debugging
+      // Log all output in debug mode
       const debugLines = lines.filter(line =>
         line.includes('GPU_') || 
         line.includes('ERROR') || 
@@ -375,7 +360,7 @@ except Exception as e:
       );
       if (debugLines.length > 0) {
         const compactDebug = debugLines.map(line => line.trim()).filter(Boolean).join(' | ');
-        log(`   Debug output: ${compactDebug}`, 'cyan');
+        debug(`GPU test output: ${compactDebug}`);
       }
       
       const gpuAvailable = lines.find(line => line.startsWith('GPU_AVAILABLE:'))?.split(':')[1]?.trim();
@@ -388,13 +373,9 @@ except Exception as e:
       
       if (gpuAvailable === 'true' && gpuTested === 'true') {
         const method = gpuMethod ? ` (${gpuMethod})` : '';
-        log(`✅ GPU test passed - CUDA acceleration confirmed${method}`, 'green');
-        if (gpuModelSource) {
-          log(`   GPU test model source: ${gpuModelSource}`, 'cyan');
-        }
-        if (gpuModelPath) {
-          log(`   GPU test model path: ${gpuModelPath}`, 'cyan');
-        }
+        debug(`GPU test passed - CUDA acceleration confirmed${method}`, 'green');
+        if (gpuModelSource) debug(`GPU test model source: ${gpuModelSource}`);
+        if (gpuModelPath) debug(`GPU test model path: ${gpuModelPath}`);
         return {
           available: true,
           type: 'GPU (CUDA) - Tested',
@@ -553,25 +534,25 @@ async function ensureDirectoriesAndFiles() {
   // Create media directory
   if (!existsSync(MEDIA_DIR)) {
     mkdirSync(MEDIA_DIR, { recursive: true });
-    log('✅ Created media directory', 'green');
+    debug('Created media directory', 'green');
   } else {
-    log('✅ Media directory exists', 'green');
+    debug('Media directory exists', 'green');
   }
 
   // Create transcriptions directory
   if (!existsSync(TRANSCRIPTIONS_DIR)) {
     mkdirSync(TRANSCRIPTIONS_DIR, { recursive: true });
-    log('✅ Created transcriptions directory', 'green');
+    debug('Created transcriptions directory', 'green');
   } else {
-    log('✅ Transcriptions directory exists', 'green');
+    debug('Transcriptions directory exists', 'green');
   }
 
   // Create uploads directory
   if (!existsSync(UPLOADS_DIR)) {
     mkdirSync(UPLOADS_DIR, { recursive: true });
-    log('✅ Created uploads directory', 'green');
+    debug('Created uploads directory', 'green');
   } else {
-    log('✅ Uploads directory exists', 'green');
+    debug('Uploads directory exists', 'green');
   }
 
   // Create config.json if it doesn't exist
@@ -582,16 +563,15 @@ async function ensureDirectoriesAndFiles() {
       version: "1.0.0"
     };
     writeFileSync(CONFIG_FILE, JSON.stringify(defaultConfig, null, 2));
-    log('✅ Created config.json', 'green');
+    debug('Created config.json', 'green');
   } else {
-    log('✅ Config file exists', 'green');
+    debug('Config file exists', 'green');
   }
 
   // Create README files for directories if they don't exist
   const mediaReadme = path.join(MEDIA_DIR, 'README.md');
   if (!existsSync(mediaReadme)) {
-    const mediaReadmeContent = `# Media Files Directory
-
+    const mediaReadmeContent = `# Media Files\n
 Place your audio/video files here for transcription.
 
 ## Supported Formats
@@ -607,7 +587,7 @@ Run \`npm run setup\` and choose option 1 to transcribe files from this director
 - GPU acceleration is available for faster processing
 `;
     writeFileSync(mediaReadme, mediaReadmeContent);
-    log('✅ Created media/README.md', 'green');
+    debug('Created media/README.md', 'green');
   }
 
   const transcriptionsReadme = path.join(TRANSCRIPTIONS_DIR, 'README.md');
@@ -630,7 +610,7 @@ Each transcription file includes:
 Open any .txt file to view the transcription results.
 `;
     writeFileSync(transcriptionsReadme, transcriptionsReadmeContent);
-    log('✅ Created transcriptions/README.md', 'green');
+    debug('Created transcriptions/README.md', 'green');
   }
 }
 
@@ -644,7 +624,7 @@ async function checkPrerequisites(forceReinstall = false) {
     const config = loadConfig();
     if (config.PYTHON_PATH && existsSync(config.PYTHON_PATH)) {
       RESOLVED_PYTHON_PATH = config.PYTHON_PATH;
-      log(`🔒 Using locked Python path from config: ${RESOLVED_PYTHON_PATH}`, 'green');
+      debug(`Using locked Python path from config: ${RESOLVED_PYTHON_PATH}`, 'green');
       
       // Validate it can still import faster_whisper
       if (!validatePythonPath(RESOLVED_PYTHON_PATH)) {
@@ -659,7 +639,7 @@ async function checkPrerequisites(forceReinstall = false) {
       }
     } else {
       // No saved path, detect and lock it
-      log('🔍 No saved Python path found, detecting...', 'cyan');
+      debug('No saved Python path found, detecting...');
       try {
         RESOLVED_PYTHON_PATH = detectAndLockPythonPath();
       } catch (error) {
@@ -672,7 +652,7 @@ async function checkPrerequisites(forceReinstall = false) {
     // This ensures GPU works even if libraries weren't installed initially
     try {
       execSync('nvidia-smi', { encoding: 'utf8', stdio: 'pipe' });
-      log('🎮 NVIDIA GPU detected - checking GPU libraries...', 'cyan');
+      debug('NVIDIA GPU detected - checking GPU libraries...');
       
       // Check if libraries are installed
       let librariesInstalled = false;
@@ -683,7 +663,7 @@ async function checkPrerequisites(forceReinstall = false) {
           stdio: 'pipe' 
         });
         librariesInstalled = true;
-        log('✅ GPU libraries already installed', 'green');
+        debug('GPU libraries already installed', 'green');
       } catch (importError) {
         log('⚠️  GPU libraries missing - installing now...', 'yellow');
         await installGPUDependencies();
@@ -715,12 +695,12 @@ async function checkPrerequisites(forceReinstall = false) {
     return { success: true, gpuStatus: gpuStatus };
   }
   
-  log('\n🔍 Checking prerequisites...', 'cyan');
+  debug('Checking prerequisites...');
   
   // Check Node.js version
   try {
     const nodeVersion = execSync('node --version', { encoding: 'utf8' }).trim();
-    log(`✅ Node.js: ${nodeVersion}`, 'green');
+    debug(`Node.js: ${nodeVersion}`, 'green');
   } catch (error) {
     log('❌ Node.js not found. Please install Node.js 14 or higher.', 'red');
     return false;
@@ -729,12 +709,12 @@ async function checkPrerequisites(forceReinstall = false) {
   // ===== PYTHON DETECTION AND PATH RESOLUTION (full install: resolve only, validate after pip install) =====
   let pythonPath;
   try {
-    log('🐍 Resolving Python executable path...', 'cyan');
+    debug('Resolving Python executable path...');
     pythonPath = resolvePythonPathOnly();
     
     // Check Python version using resolved path
     const pythonVersion = execSync(`"${pythonPath}" --version`, { encoding: 'utf8' }).trim();
-    log(`✅ Python: ${pythonVersion}`, 'green');
+    debug(`Python: ${pythonVersion}`, 'green');
     
     // Check if Python version is 3.9 or higher
     const versionMatch = pythonVersion.match(/Python (\d+)\.(\d+)/);
@@ -749,7 +729,7 @@ async function checkPrerequisites(forceReinstall = false) {
     
     // Store resolved path globally so pip/npm steps use it; faster_whisper is validated after pip install
     RESOLVED_PYTHON_PATH = pythonPath;
-    log(`🔒 Using Python for install: ${pythonPath}`, 'green');
+    debug(`Using Python for install: ${pythonPath}`, 'green');
     
   } catch (error) {
     log(`❌ Python detection failed: ${error.message}`, 'red');
@@ -759,7 +739,7 @@ async function checkPrerequisites(forceReinstall = false) {
   // Check yt-dlp
   try {
     const ytdlpVersion = execSync('yt-dlp --version', { encoding: 'utf8' }).trim();
-    log(`✅ yt-dlp: ${ytdlpVersion}`, 'green');
+    debug(`yt-dlp: ${ytdlpVersion}`, 'green');
   } catch (error) {
     log('❌ yt-dlp not found. Attempting to install...', 'yellow');
     try {
@@ -779,7 +759,7 @@ async function checkPrerequisites(forceReinstall = false) {
 
   // Quick CUDA check before full GPU test
   try {
-    log('🔍 Quick CUDA check...', 'cyan');
+    debug('Quick CUDA check...');
     const pythonCmd = getPythonCommand();
     const cudaCheck = execSync(`${pythonCmd} -c "import torch; print(\\"CUDA:\\", torch.cuda.is_available(), \\"Device:\\", torch.cuda.get_device_name(0) if torch.cuda.is_available() else \\"N/A\\")"`, { 
       encoding: 'utf8',
@@ -788,18 +768,15 @@ async function checkPrerequisites(forceReinstall = false) {
     });
     const cudaLines = cudaCheck.trim().split('\n');
     const cudaLine = cudaLines.find(line => line.includes('CUDA:'));
-    if (cudaLine) {
-      log(`   ${cudaLine}`, 'cyan');
-    }
+    if (cudaLine) debug(cudaLine);
   } catch (cudaCheckError) {
     // torch may not be installed, that's okay - faster-whisper doesn't require it
-    // log('   ⚠️  Could not check CUDA (torch may not be installed)', 'yellow');
   }
 
   // Check ffmpeg (recommended for yt-dlp)
   try {
     const ffmpegVersion = execSync('ffmpeg -version', { encoding: 'utf8' }).split('\n')[0];
-    log(`✅ ffmpeg: ${ffmpegVersion}`, 'green');
+    debug(`ffmpeg: ${ffmpegVersion}`, 'green');
   } catch (error) {
     log('⚠️  ffmpeg not found. Attempting to install...', 'yellow');
     
@@ -901,7 +878,7 @@ async function checkPrerequisites(forceReinstall = false) {
   log('📦 Installing Python dependencies from requirements.txt (this may take a few minutes)...', 'cyan');
   try {
     const pipCmd = getPipCommand();
-    log(`   Using: ${pipCmd}`, 'cyan');
+    debug(`Using pip: ${pipCmd}`);
     if (existsSync(requirementsPath)) {
       execSync(`${pipCmd} install -r "${requirementsPath}"`, { stdio: 'inherit', cwd: __dirname });
       log('✅ Python dependencies from requirements.txt installed successfully', 'green');
@@ -913,13 +890,13 @@ async function checkPrerequisites(forceReinstall = false) {
     
     // Verify installation with resolved Python
     const pythonCmd = getPythonCommand();
-    log('🔍 Verifying faster-whisper installation...', 'cyan');
+    debug('Verifying faster-whisper installation...');
     execSync(`${pythonCmd} -c "import faster_whisper; print('OK')"`, { 
       encoding: 'utf8',
       stdio: 'pipe',
       timeout: 10000
     });
-    log('✅ faster-whisper verified and accessible', 'green');
+    debug('faster-whisper verified and accessible', 'green');
     
     // Check for NVIDIA GPU and install GPU dependencies
     await installGPUDependencies();
@@ -955,18 +932,18 @@ function markInstallationComplete() {
   // Ensure PYTHON_PATH is saved if we have it
   if (RESOLVED_PYTHON_PATH) {
     config.PYTHON_PATH = RESOLVED_PYTHON_PATH;
-    log(`🔒 Python path saved to config: ${RESOLVED_PYTHON_PATH}`, 'green');
+    debug(`Python path saved to config: ${RESOLVED_PYTHON_PATH}`, 'green');
   }
   
   saveConfig(config);
-  log('✅ Installation marked as complete', 'green');
+  debug('Installation marked as complete', 'green');
 }
 
 async function installGPUDependencies() {
   try {
     // Check if NVIDIA GPU is available
     const nvidiaCheck = execSync('nvidia-smi', { encoding: 'utf8', stdio: 'pipe' });
-    log('🎮 NVIDIA GPU detected!', 'green');
+    debug('NVIDIA GPU detected!', 'green');
     
     // Install NVIDIA libraries for GPU support
     log('📦 Installing NVIDIA GPU libraries (this may take a few minutes)...', 'cyan');
@@ -974,7 +951,7 @@ async function installGPUDependencies() {
     try {
       // Install cuBLAS and cuDNN for CUDA 12 using resolved Python's pip
       const pipCmd = getPipCommand();
-      log(`   Using: ${pipCmd}`, 'cyan');
+      debug(`Using pip: ${pipCmd}`);
       execSync(`${pipCmd} install nvidia-cublas-cu12`, { stdio: 'inherit' });
       execSync(`${pipCmd} install nvidia-cudnn-cu12==9.*`, { stdio: 'inherit' });
       log('✅ NVIDIA GPU libraries installed successfully', 'green');
@@ -1483,20 +1460,26 @@ async function transcribeFile() {
         env: process.env  // CRITICAL: Pass environment variables including PATH and CUDA paths
       });
       
+      let shownLoadingModel = false;
+      let shownTranscribing = false;
       pythonProcess.stdout.on('data', (data) => {
         const lines = data.toString().split('\n');
         for (const line of lines) {
           if (line.trim()) {
             if (line.startsWith('STATUS:')) {
-              // Handle progress updates
               const status = line.substring(7);
-              log(`   ${status}`, 'cyan');
+              if (!shownLoadingModel && (status.startsWith('Loading Whisper') || status.startsWith('Checking cache'))) {
+                log('   ⏳ Loading model...', 'cyan');
+                shownLoadingModel = true;
+              } else if (!shownTranscribing && (status.startsWith('Starting transcription') || status.startsWith('Processing segments'))) {
+                log('   🎙️  Transcribing...', 'cyan');
+                shownTranscribing = true;
+              } else {
+                debug(`STATUS: ${status}`);
+              }
             } else if (line.startsWith('DEBUG:')) {
-              // Handle debug messages
-              const debug = line.substring(6);
-              log(`   [DEBUG] ${debug}`, 'yellow');
+              debug(line.substring(6), 'yellow');
             } else if (line.startsWith('{')) {
-              // This is the JSON result
               output += line;
             }
           }
@@ -1526,26 +1509,17 @@ async function transcribeFile() {
     const duration = ((endTime - startTime) / 1000).toFixed(2);
     
     if (transcriptionResult.success) {
-      log('\n✅ Transcription Complete!', 'green');
-      
-      log(`\n📊 Transcription Info:`, 'cyan');
-      log(`   Language: ${transcriptionResult.language} (${(transcriptionResult.language_probability * 100).toFixed(1)}% confidence)`, 'cyan');
-      log(`   Device: ${transcriptionResult.device.toUpperCase()}`, transcriptionResult.device === 'cuda' ? 'green' : 'yellow');
-      log(`   Model: ${transcriptionResult.model_size}`, 'cyan');
-      if (transcriptionResult.resolved_model_id) {
-        log(`   Actual Model Source: ${transcriptionResult.resolved_model_id}`, 'cyan');
-      }
-      if (transcriptionResult.resolved_model_path) {
-        log(`   Actual Model Path: ${transcriptionResult.resolved_model_path}`, 'cyan');
-      }
-      log(`   Compute Type: ${transcriptionResult.compute_type}`, 'cyan');
-      log(`   Segments Processed: ${transcriptionResult.segment_count || 'N/A'}`, 'cyan');
-      log(`   Processing time: ${duration} seconds`, 'cyan');
-      
-      if (transcriptionResult.output_file) {
-        log(`\n📄 Transcription saved to: ${transcriptionResult.output_file}`, 'green');
-        log(`   📖 View transcription: file://${transcriptionResult.output_file.replace(/\\/g, '/')}`, 'blue');
-      }
+      const deviceLabel = transcriptionResult.device === 'cuda' ? 'GPU' : 'CPU';
+      const langInfo = `${transcriptionResult.language} ${(transcriptionResult.language_probability * 100).toFixed(0)}%`;
+      const outFile = transcriptionResult.output_file ? path.basename(transcriptionResult.output_file) : selectedFile;
+      log(`\n✅  Done → transcriptions/${outFile}  (${duration}s · ${deviceLabel} · ${langInfo})`, 'green');
+
+      debug(`Language: ${transcriptionResult.language} (${(transcriptionResult.language_probability * 100).toFixed(1)}% confidence)`);
+      debug(`Device: ${transcriptionResult.device.toUpperCase()}`, transcriptionResult.device === 'cuda' ? 'green' : 'yellow');
+      debug(`Model: ${transcriptionResult.model_size} · compute: ${transcriptionResult.compute_type}`);
+      if (transcriptionResult.resolved_model_id) debug(`Model source: ${transcriptionResult.resolved_model_id}`);
+      if (transcriptionResult.resolved_model_path) debug(`Model path: ${transcriptionResult.resolved_model_path}`);
+      debug(`Segments: ${transcriptionResult.segment_count || 'N/A'} · time: ${duration}s`);
       
     } else {
       log('❌ Transcription failed:', 'red');
@@ -1560,9 +1534,8 @@ async function transcribeFile() {
 }
 
 async function startRelayServer() {
-  log('\n🌐 Starting Relay Server for Extension Mode', 'cyan');
-  log('   The server will run on http://localhost:8787', 'yellow');
-  log('   Press Ctrl+C to stop the server', 'yellow');
+  log('\n🌐  Relay server → http://localhost:8787', 'cyan');
+  log('    Play a lecture in your browser.  Ctrl+C to stop.', 'yellow');
   
   // Pass the validated Python path so relay uses the same interpreter (avoids PyManager/other PATH Pythons)
   const config = loadConfig();
@@ -1570,7 +1543,10 @@ async function startRelayServer() {
   const relayEnv = { ...process.env };
   if (pythonPath && existsSync(pythonPath)) {
     relayEnv.MP3GRABBER_PYTHON_PATH = pythonPath;
-    log(`   Python for transcription: ${pythonPath}`, 'cyan');
+    debug(`Python for transcription: ${pythonPath}`);
+  }
+  if (DEBUG) {
+    relayEnv.LOCALSTREAM_DEBUG = '1';
   }
   
   let stderrOutput = '';
@@ -1636,7 +1612,7 @@ async function startRelayServer() {
 }
 
 async function main() {
-  log('🎵 MP3 Grabber & Auto-Transcription System', 'bright');
+  log('LocalStream – Private Lecture Transcriber', 'bright');
   log('==========================================', 'bright');
 
   // Check for force reinstall flag
@@ -1644,6 +1620,12 @@ async function main() {
   
   if (forceReinstall) {
     log('🔄 Force reinstall mode enabled', 'yellow');
+  }
+
+  // Show first-run message before setup begins
+  const setupConfig = loadConfig();
+  if (!setupConfig.installCompleted || forceReinstall) {
+    log('⚙️  First-time setup — this may take a few minutes...', 'yellow');
   }
 
   // Check prerequisites
@@ -1654,25 +1636,21 @@ async function main() {
     process.exit(1);
   }
 
-  log('\n✅ All prerequisites verified successfully!', 'green');
-  
-  // Display GPU/CPU status
+  // Compact ready line
   const gpuStatus = prerequisitesResult.gpuStatus;
-  log(`🎮 Processing Device: ${gpuStatus.type}`, gpuStatus.color);
-  if (gpuStatus.modelSource) {
-    log(`🧠 Setup model source: ${gpuStatus.modelSource}`, 'cyan');
-  }
-  if (gpuStatus.modelPath) {
-    log(`📁 Setup model path: ${gpuStatus.modelPath}`, 'cyan');
-  }
+  const deviceLabel = gpuStatus.available ? 'GPU (CUDA)' : 'CPU';
+  const modelLabel = gpuStatus.available ? 'medium model' : 'base model';
+  log(`\n✅  Ready  ·  ${deviceLabel}  ·  ${modelLabel}`, 'green');
+  debug(`Processing device: ${gpuStatus.type}`, gpuStatus.color);
+  if (gpuStatus.modelSource) debug(`Model source: ${gpuStatus.modelSource}`);
+  if (gpuStatus.modelPath) debug(`Model path: ${gpuStatus.modelPath}`);
 
   // Main menu
   while (true) {
     log('\n' + '='.repeat(50), 'bright');
-    log('Choose transcription mode:', 'cyan');
-    log('1. Transcribe media file (from media/ folder)', 'blue');
-    log('2. Transcribe via browser extension (start relay server)', 'blue');
-    log('3. Exit', 'blue');
+    log('  1  Transcribe a file     (media/ folder)', 'blue');
+    log('  2  Browser extension     (Canvas · Panopto · YouTube)', 'blue');
+    log('  3  Exit', 'blue');
     
     const choice = await question('\nEnter your choice (1-3): ');
     

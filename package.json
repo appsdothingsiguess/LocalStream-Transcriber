@@ -9,6 +9,7 @@
     "start": "node relay.js",
     "run": "node start.js",
     "setup": "node start.js",
+    "setup:debug": "node start.js --debug",
     "setup:install": "node start.js -i",
     "fix": "node fix-dependencies.js"
   },

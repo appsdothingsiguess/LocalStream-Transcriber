@@ -8,6 +8,9 @@ import { get } from 'https';
 import { execSync, spawn } from 'child_process';
 import { v4 as uuidv4 } from 'uuid';
 
+const DEBUG = process.env.LOCALSTREAM_DEBUG === '1';
+function dbg(msg) { if (DEBUG) console.log(`[DBG] ${msg}`); }
+
 // ============================================================================
 // JOB QUEUE AND DEDUPLICATION SYSTEM
 // ============================================================================
@@ -72,12 +75,13 @@ class JobQueue {
     job.entryId = entryId;
     
     if (this.isDuplicate(entryId)) {
-      console.log(`⏭️  [SKIP] Duplicate stream detected: ${entryId || 'unknown'}`);
+      console.log(`⏭️  Skipped (${entryId || 'unknown'} — already queued this session)`);
       return false;
     }
     
+    console.log(`📡  Stream detected  (${entryId || 'unknown'})`);
     this.queue.push(job);
-    console.log(`📥 [QUEUE] Added job ${job.jobId} (entryId: ${entryId || 'N/A'}) - Queue size: ${this.queue.length}`);
+    dbg(`Added job ${job.jobId} (entryId: ${entryId || 'N/A'}) — queue size: ${this.queue.length}`);
     
     // Start processing if not already processing
     if (!this.processing) {
@@ -98,7 +102,7 @@ class JobQueue {
     this.processing = true;
     this.currentJob = this.queue.shift();
     
-    console.log(`🚀 [QUEUE] Processing job ${this.currentJob.jobId} - Remaining: ${this.queue.length}`);
+    dbg(`Processing job ${this.currentJob.jobId} — remaining: ${this.queue.length}`);
     
     try {
       await this.currentJob.handler();
@@ -108,7 +112,7 @@ class JobQueue {
         this.completedIds.add(this.currentJob.entryId);
       }
       
-      console.log(`✅ [QUEUE] Job ${this.currentJob.jobId} completed`);
+      dbg(`Job ${this.currentJob.jobId} completed`);
     } catch (error) {
       console.error(`❌ [QUEUE] Job ${this.currentJob.jobId} failed:`, error.message);
     } finally {
@@ -117,10 +121,10 @@ class JobQueue {
       
       // Process next job if available
       if (this.queue.length > 0) {
-        console.log(`📋 [QUEUE] ${this.queue.length} job(s) remaining`);
+        dbg(`${this.queue.length} job(s) remaining in queue`);
         setImmediate(() => this.processNext());
       } else {
-        console.log(`✨ [QUEUE] All jobs completed`);
+        dbg('All jobs completed');
       }
     }
   }
@@ -174,12 +178,11 @@ function loadPythonPathFromConfig() {
             timeout: 5000
           });
           
-          console.log(`🔒 Using locked Python path from config: ${config.PYTHON_PATH}`);
+          dbg(`Using locked Python path from config: ${config.PYTHON_PATH}`);
           return config.PYTHON_PATH;
         } catch (error) {
           console.warn(`⚠️  Saved Python path invalid: ${config.PYTHON_PATH}`);
-          console.warn(`   Error: ${error.message}`);
-          console.warn(`   Falling back to detection...`);
+          dbg(`   Error: ${error.message}`);
         }
       }
     }
@@ -205,7 +208,7 @@ function detectPythonExecutable() {
     try {
       execSync(`"${envPath}" --version`, { encoding: 'utf8', stdio: 'pipe', timeout: 5000 });
       pythonExecutable = envPath;
-      console.log(`🔒 Using Python from start.js: ${envPath}`);
+      dbg(`Using Python from start.js: ${envPath}`);
       return envPath;
     } catch (e) {
       console.warn(`⚠️  MP3GRABBER_PYTHON_PATH invalid: ${envPath}`);
@@ -220,7 +223,7 @@ function detectPythonExecutable() {
   }
   
   // FALLBACK: Try common Python executables in order of preference
-  console.log('🔍 Python path not in config, detecting...');
+  dbg('Python path not in config, detecting...');
   const candidates = ['python3', 'python', 'py'];
   
   for (const candidate of candidates) {
@@ -242,7 +245,7 @@ function detectPythonExecutable() {
           });
           
           pythonExecutable = wherePath;
-          console.log(`✅ Detected Python executable: ${wherePath}`);
+          dbg(`Detected Python executable: ${wherePath}`);
           return wherePath;
         } catch (whereError) {
           // 'where' failed, try direct command
@@ -256,7 +259,7 @@ function detectPythonExecutable() {
         timeout: 5000
       });
       pythonExecutable = candidate;
-      console.log(`✅ Detected Python executable: ${candidate}`);
+      dbg(`Detected Python executable: ${candidate}`);
       return candidate;
     } catch (error) {
       // Try next candidate
@@ -280,7 +283,7 @@ function verifyPythonVersion(pythonCmd) {
       encoding: 'utf8',
       stdio: 'pipe'
     }).trim();
-    console.log(`🐍 Using Python: ${version}`);
+    dbg(`Using Python: ${version}`);
     return true;
   } catch {
     return false;
@@ -516,13 +519,13 @@ function writeNetscapeCookieFile(cookies, filepath) {
   const header = '# Netscape HTTP Cookie File\n';
   const content = header + cookies.map(formatCookie).join('\n');
   writeFileSync(filepath, content);
-  console.log(`✅ Cookie file written: ${filepath} (${cookies.length} cookies)`);
+  dbg(`Cookie file written: ${filepath} (${cookies.length} cookies)`);
 }
 
 // --- Transcription Function ---
 function transcribe(file, forceCPU = false) {
     try {
-        console.log(`🔄 Transcribing audio file...${forceCPU ? ' (CPU mode)' : ''}`);
+        dbg(`Transcribing audio file...${forceCPU ? ' (CPU mode)' : ''}`);
         
         // Validate file size before attempting transcription
         const stats = statSync(file);
@@ -790,12 +793,11 @@ if (process.platform === 'win32') {
       } else {
         process.env.PATH = pathsToAdd.join(';');
       }
-      console.log(`✅ GPU library paths configured for relay server (${pathsToAdd.length} paths)`);
-      if (cublasPath) console.log(`   cuBLAS: ${cublasPath}`);
-      if (cudnnPath) console.log(`   cuDNN: ${cudnnPath}`);
+      dbg(`GPU library paths configured (${pathsToAdd.length} paths)`);
+      if (cublasPath) dbg(`  cuBLAS: ${cublasPath}`);
+      if (cudnnPath) dbg(`  cuDNN: ${cudnnPath}`);
     } else {
-      console.warn('⚠️  GPU library paths NOT configured - GPU may not work');
-      console.warn('   Install: pip install nvidia-cublas-cu12 nvidia-cudnn-cu12');
+      dbg('GPU library paths NOT configured — GPU may fall back to CPU');
     }
   } catch (pathError) {
     // GPU libraries not installed or path error - will use CPU fallback
@@ -807,14 +809,13 @@ const pythonCmd = detectPythonExecutable();
 if (!pythonCmd) {
   console.error('⚠️  WARNING: Python executable not found!');
   console.error('   Transcription will fail until Python is installed and in PATH.');
-  console.error('   Tried: py, python3, python');
 } else {
   verifyPythonVersion(pythonCmd);
-  console.log(`✅ Python executable detected: ${pythonCmd}`);
+  dbg(`Python executable ready: ${pythonCmd}`);
 }
 
 const server = app.listen(PORT, () => {
-  console.log(`🚀 Relay server listening on port ${PORT}`);
+  dbg(`Relay server listening on port ${PORT}`);
   if (!existsSync(UPLOADS_DIR)) mkdirSync(UPLOADS_DIR);
   if (!existsSync(TRANSCRIPTIONS_DIR)) mkdirSync(TRANSCRIPTIONS_DIR);
   if (!existsSync(DOWNLOADS_DIR)) mkdirSync(DOWNLOADS_DIR);
@@ -859,10 +860,10 @@ function downloadFile(url, dest) {
 
 // --- WebSocket Server Logic ---
 wss.on('connection', ws => {
-  console.log('🌐 Client connected');
+  dbg('Extension connected');
   
   ws.on('close', (code, reason) => {
-    console.log('🔌 Client disconnected');
+    dbg('Extension disconnected');
   });
   
   ws.on('error', error => {
@@ -871,7 +872,7 @@ wss.on('connection', ws => {
 
   ws.on('message', async msg => {
     const messageString = msg.toString();
-    console.log('📨 Received message:', messageString);
+    dbg(`Received message: ${messageString}`);
 
     try {
       const parsedMessage = JSON.parse(messageString);
@@ -884,13 +885,13 @@ wss.on('connection', ws => {
 
       // Handle ping messages (connection verification)
       if (type === 'ping') {
-        console.log('🏓 Ping received from extension');
+        dbg('Ping received from extension');
         ws.send(JSON.stringify({ type: 'pong', timestamp: Date.now() }));
         return;
       }
 
       if (type === 'clear_completed') {
-        console.log('🧹 [RELAY] Clearing completed job IDs (manual queue request)');
+        dbg('Clearing completed job IDs (manual queue request)');
         jobQueue.completedIds.clear();
         ws.send(JSON.stringify({ 
           type: 'clear_completed_ack', 
@@ -902,7 +903,7 @@ wss.on('connection', ws => {
 
       const jobId = uuidv4();
       
-      console.log(`🔄 [QUEUE] New transcription request: ${jobId}`);
+      dbg(`New transcription request: ${jobId}`);
       const startMessage = JSON.stringify({
         type: 'new_transcription',
         payload: { 
@@ -928,7 +929,7 @@ wss.on('connection', ws => {
                                url.includes('caption_captionasset');
           
           if (isSubtitleUrl) {
-            console.log(`⏭️  [SKIP] Subtitle/caption URL: ${url.substring(0, 100)}...`);
+            dbg(`Skipped subtitle/caption URL: ${url.substring(0, 100)}...`);
             const skipMessage = JSON.stringify({
               type: 'transcription_skipped',
               payload: { 
@@ -949,8 +950,8 @@ wss.on('connection', ws => {
             url: url,
             handler: async () => {
               return new Promise((resolve, reject) => {
-                console.log(`🎬 [DOWNLOAD] Starting download for job ${jobId}`);
-                console.log(`🔗 [DOWNLOAD] URL: ${url.substring(0, 100)}...`);
+                dbg(`Starting download for job ${jobId}`);
+                dbg(`URL: ${url.substring(0, 100)}...`);
                 
                 if (!cookies || cookies.length === 0) {
                   console.warn('⚠️  No cookies provided for stream, attempting download anyway');
@@ -990,7 +991,8 @@ wss.on('connection', ws => {
                 // Add URL
                 ytdlpArgs.push(url);
                 
-                console.log(`📥 [DOWNLOAD] Starting yt-dlp download...`);
+                console.log('⬇️   Downloading...');
+                dbg('Starting yt-dlp download...');
                 
                 // Spawn yt-dlp process
                 const ytdlpProcess = spawn('yt-dlp', ytdlpArgs, {
@@ -1015,7 +1017,7 @@ wss.on('connection', ws => {
                     
                     // Only log important messages
                     if (trimmed.match(/\[download\] Destination:|Merging formats|Deleting original file|already been downloaded|Fixing/i)) {
-                      console.log(`   📦 [DOWNLOAD] ${trimmed}`);
+                      dbg(`yt-dlp: ${trimmed}`);
                     }
                   });
                 });
@@ -1030,9 +1032,9 @@ wss.on('connection', ws => {
                     const trimmed = line.trim();
                     if (!trimmed) return;
                     
-                    // Log warnings and errors
+                    // Demote yt-dlp noise to debug
                     if (trimmed.match(/WARNING|ERROR|error/i)) {
-                      console.error(`   ⚠️  [DOWNLOAD] ${trimmed}`);
+                      dbg(`yt-dlp: ${trimmed}`);
                     }
                   });
                 });
@@ -1046,7 +1048,7 @@ wss.on('connection', ws => {
                   }
                   
                   if (code === 0) {
-                    console.log(`✅ [DOWNLOAD] Download complete for job ${jobId}`);
+                    dbg(`Download complete for job ${jobId}`);
                     
                     // Verify file exists
                     if (!existsSync(outputPath)) {
@@ -1071,13 +1073,17 @@ wss.on('connection', ws => {
                       return;
                     }
                     
-                    console.log(`📄 [DOWNLOAD] File saved: ${outputFilename}`);
+                    dbg(`File saved: ${outputFilename}`);
                     
                     // Proceed with transcription
                     try {
-                      console.log(`🎙️  [TRANSCRIBE] Starting transcription for job ${jobId}...`);
+                      console.log('🎙️   Transcribing...');
                       const transcript = transcribe(outputPath);
-                      console.log(`✅ [TRANSCRIBE] Transcription complete for job ${jobId}`);
+                      // Derive a friendly filename for the done message
+                      const entryId = jobQueue.extractEntryId(url);
+                      const baseName = entryId && entryId !== url ? entryId : outputFilename.replace(/\.[^.]+$/, '');
+                      console.log(`✅   Done → transcriptions/${baseName}.txt`);
+                      dbg(`Transcription complete for job ${jobId}`);
 
                       const resultMessage = JSON.stringify({
                         type: 'transcription_done',
@@ -1216,7 +1222,7 @@ wss.on('connection', ws => {
 
         // Handle blob data
         if (type === 'blob') {
-          console.log(`📥 [QUEUE] Processing blob data (${size} bytes, ${mimeType})...`);
+          dbg(`Processing blob data (${size} bytes, ${mimeType})...`);
           
           // Add job to queue
           jobQueue.enqueue({
@@ -1242,12 +1248,13 @@ wss.on('connection', ws => {
                   // Convert base64 to file
                   const buffer = Buffer.from(data, 'base64');
                   writeFileSync(localFilePath, buffer);
-                  console.log(`✅ [QUEUE] Blob data saved to file: ${jobId}${fileExtension}`);
+                  dbg(`Blob data saved to file: ${jobId}${fileExtension}`);
 
                   // Transcribe
-                  console.log(`🎙️  [TRANSCRIBE] Starting transcription for job ${jobId}...`);
+                  console.log('🎙️   Transcribing...');
                   const transcript = transcribe(localFilePath);
-                  console.log(`✅ [TRANSCRIBE] Transcription complete for job ${jobId}`);
+                  console.log(`✅   Done → transcriptions/${jobId}.txt`);
+                  dbg(`Transcription complete for job ${jobId}`);
 
                   const resultMessage = JSON.stringify({
                     type: 'transcription_done',
@@ -1315,7 +1322,7 @@ wss.on('connection', ws => {
             throw new Error('URL is required for type "url"');
           }
           
-          console.log(`📥 [QUEUE] Processing URL download: ${url.substring(0, 100)}...`);
+          dbg(`Processing URL download: ${url.substring(0, 100)}...`);
           
           // Add job to queue
           jobQueue.enqueue({
@@ -1324,16 +1331,18 @@ wss.on('connection', ws => {
             handler: async () => {
               return new Promise(async (resolve, reject) => {
                 try {
-                  console.log(`🔗 [DOWNLOAD] Downloading file for job ${jobId}...`);
+                  dbg(`Downloading file for job ${jobId}...`);
                   const fileExtension = path.extname(new URL(url).pathname) || '.mp3';
                   const localFilePath = path.join(UPLOADS_DIR, `${jobId}${fileExtension}`);
+                  console.log('⬇️   Downloading...');
                   await downloadFile(url, localFilePath);
-                  console.log(`✅ [DOWNLOAD] Download complete for job ${jobId}`);
+                  dbg(`Download complete for job ${jobId}`);
                   
                   // Transcribe
-                  console.log(`🎙️  [TRANSCRIBE] Starting transcription for job ${jobId}...`);
+                  console.log('🎙️   Transcribing...');
                   const transcript = transcribe(localFilePath);
-                  console.log(`✅ [TRANSCRIBE] Transcription complete for job ${jobId}`);
+                  console.log(`✅   Done → transcriptions/${jobId}.txt`);
+                  dbg(`Transcription complete for job ${jobId}`);
 
                   const resultMessage = JSON.stringify({
                     type: 'transcription_done',
