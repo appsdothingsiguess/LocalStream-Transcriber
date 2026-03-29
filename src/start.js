@@ -628,6 +628,10 @@ Open any .txt file to view the transcription results.
 async function checkPrerequisites(forceReinstall = false) {
   // Check if we should skip installation
   if (shouldSkipInstall(forceReinstall)) {
+    // Always regenerate transcribe.py so env-var-based model selection is
+    // always current (the template lives in start.js, not a static file).
+    await createPythonScript();
+
     // Still need to ensure directories and files exist
     await ensureDirectoriesAndFiles();
     
