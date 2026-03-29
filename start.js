@@ -1516,6 +1516,14 @@ async function transcribeFile() {
       log(`\n✅  Done  (${duration}s · ${deviceLabel} · ${langInfo})`, 'green');
       log(`   ${absPath}`, 'cyan');
 
+      // Auto-open the transcript in the default text editor
+      if (process.platform === 'win32') {
+        try {
+          spawn('cmd', ['/c', 'start', '""', absPath], { detached: true, stdio: 'ignore' }).unref();
+          log('   Opening transcript...', 'cyan');
+        } catch (_) { /* ignore if open fails */ }
+      }
+
       debug(`Language: ${transcriptionResult.language} (${(transcriptionResult.language_probability * 100).toFixed(1)}% confidence)`);
       debug(`Device: ${transcriptionResult.device.toUpperCase()}`, transcriptionResult.device === 'cuda' ? 'green' : 'yellow');
       debug(`Model: ${transcriptionResult.model_size} · compute: ${transcriptionResult.compute_type}`);

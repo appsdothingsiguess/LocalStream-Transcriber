@@ -1089,6 +1089,9 @@ wss.on('connection', ws => {
                       const transcriptPath = path.join(TRANSCRIPTIONS_DIR, `${baseName}.txt`);
                       console.log(`✅   Done`);
                       console.log(`     ${transcriptPath}`);
+                      if (process.platform === 'win32') {
+                        try { spawn('cmd', ['/c', 'start', '""', transcriptPath], { detached: true, stdio: 'ignore' }).unref(); } catch (_) {}
+                      }
                       dbg(`Transcription complete for job ${jobId}`);
 
                       const resultMessage = JSON.stringify({
