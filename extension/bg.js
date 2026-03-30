@@ -395,10 +395,6 @@ setInterval(() => {
     }
   }
   
-  console.log('🧹 [FILTER] Cleanup complete:', {
-    processed: processedBaseUrls.size,
-    pending: pendingStreams.size
-  });
 }, 60000); // Every minute
 
 // Network request listener for stream detection
