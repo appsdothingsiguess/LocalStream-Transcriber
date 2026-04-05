@@ -106,24 +106,28 @@ def check_gpu_availability():
     # Debug: print what we're checking
     print("DEBUG:Checking GPU availability...", flush=True)
     
-    # First try torch (most reliable)
+    # Use ctranslate2 directly — it's the actual inference engine faster-whisper uses,
+    # so its CUDA detection is the ground truth (torch may not be installed or may
+    # report wrong results on some Windows CUDA configurations).
     try:
-        import torch
-        print(f"DEBUG:torch imported, cuda available: {torch.cuda.is_available()}", flush=True)
-        if torch.cuda.is_available():
-            print("DEBUG:GPU available via torch.cuda", flush=True)
+        import ctranslate2
+        device_count = ctranslate2.get_cuda_device_count()
+        print(f"DEBUG:ctranslate2 CUDA device count: {device_count}", flush=True)
+        if device_count > 0:
+            print("DEBUG:GPU available via ctranslate2", flush=True)
             return True
-    except ImportError as e:
-        print(f"DEBUG:torch not available: {e}", flush=True)
+        else:
+            print("DEBUG:ctranslate2 reports no CUDA devices, using CPU", flush=True)
+            return False
+    except Exception as e:
+        print(f"DEBUG:ctranslate2 CUDA check failed: {e}", flush=True)
         pass
-    
-    # Then try CUDA libraries
+
+    # Fallback: nvidia packages importable means CUDA libraries are present
     try:
         import nvidia.cublas
         import nvidia.cudnn
         print("DEBUG:CUDA libraries imported successfully", flush=True)
-        # If we can import both, assume GPU is available
-        # The actual transcription will fallback to CPU if GPU fails
         return True
     except ImportError as e:
         print(f"DEBUG:CUDA libraries not available: {e}", flush=True)
