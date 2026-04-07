@@ -438,14 +438,17 @@ chrome.webRequest.onBeforeRequest.addListener(
  * Flush pending streams immediately (skip debounce)
  * Used when user manually triggers download
  */
+/** @returns {{ count: number, streamIds: Set<string> }} */
 async function flushPendingStreams() {
   console.log('🚀 [FILTER] Flushing pending streams (manual trigger)');
   
   const streamsToFlush = Array.from(pendingStreams.entries());
+  const streamIds = new Set();
   
   for (const [streamId, pending] of streamsToFlush) {
     // Cancel the timeout
     clearTimeout(pending.timeout);
+    streamIds.add(streamId);
     
     // Send immediately
     console.log(`⚡ [FILTER] Sending pending stream immediately: ${streamId}`);
@@ -453,6 +456,7 @@ async function flushPendingStreams() {
   }
   
   console.log(`✅ [FILTER] Flushed ${streamsToFlush.length} pending stream(s)`);
+  return { count: streamsToFlush.length, streamIds };
 }
 
 // Optional: Manual trigger via keyboard shortcut
@@ -618,8 +622,11 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
           return;
         }
         
-        // Flush pending streams first
-        await flushPendingStreams();
+        const tab = await chrome.tabs.get(request.tabId);
+        const pageUrl = tab.url || 'unknown';
+
+        // Flush debounced sniffer queue first (anything already pending before this action)
+        const flushedFirst = await flushPendingStreams();
         
         // Query the tab for videos
         let response;
@@ -656,6 +663,8 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         
         let count = 0;
         
+        // Skip URLs we already sent in the initial pending flush (same tab often lists the same manifest)
+        const sentIds = new Set(flushedFirst.streamIds);
         if (response && response.audioData) {
           for (const audioItem of response.audioData) {
             if (audioItem.type === 'url' && audioItem.url) {
@@ -663,15 +672,56 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
               const urlLower = url.toLowerCase();
               
               if (urlLower.includes('.m3u8') || urlLower.endsWith('.mpd')) {
+                const streamId = extractStreamId(url);
+                if (sentIds.has(streamId)) {
+                  continue;
+                }
+                sentIds.add(streamId);
                 const cookies = await chrome.cookies.getAll({ url: url });
-                await processStream(url, cookies, { tabId: request.tabId });
+                // Send immediately — do not use processStream() here or items stay in the 2s debounce queue.
+                await sendStreamToRelay(streamId, url, cookies, {
+                  tabId: request.tabId,
+                  initiator: pageUrl,
+                  source: 'popup-queue-all'
+                });
                 count++;
               }
             }
           }
         }
         
-        sendResponse({ success: true, count: count });
+        // Catch any streams that hit the debounce buffer while we scanned the page
+        const flushedLast = await flushPendingStreams();
+
+        let totalCount = flushedFirst.count + count + flushedLast.count;
+
+        // Many players (Kaltura, etc.) never put .m3u8 on <video> — only the network sniffer sees them.
+        // If nothing was pending and the page scan found no manifests, re-offer what we already captured.
+        // relay.js deduplicates by Kaltura entryId (queue / active job / completed), so this is safe.
+        if (totalCount === 0) {
+          const now = Date.now();
+          const recent = Array.from(processedBaseUrls.entries()).filter(
+            ([_, data]) => now - data.timestamp < 300000
+          );
+          let reoffered = 0;
+          for (const [streamId, data] of recent) {
+            if (sentIds.has(streamId)) {
+              continue;
+            }
+            sentIds.add(streamId);
+            console.log(
+              `🔄 [POPUP] Re-offering sniffer-captured stream (no manifest in DOM): ${streamId}`
+            );
+            await sendStreamToRelay(streamId, data.url, [], {
+              initiator: pageUrl,
+              source: 'popup-queue-all-fallback'
+            });
+            reoffered++;
+          }
+          totalCount = reoffered;
+        }
+
+        sendResponse({ success: true, count: totalCount });
       } catch (error) {
         console.error('❌ [POPUP] Error queuing videos:', error);
         sendResponse({ success: false, error: friendlyError(error) });
@@ -682,7 +732,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   }
   
   if (request.action === 'flushAllStreams') {
-    console.log('🎯 [POPUP] Flush All Streams triggered');
+    console.log('🎯 [POPUP] Flush pending debounce queue only');
     
     (async () => {
       try {
@@ -693,34 +743,8 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
           return;
         }
         
-        // Streams waiting in the debounce queue
-        const pendingCount = pendingStreams.size;
-
-        // Streams the sniffer already sent (or tried to send) in the last 5 minutes.
-        // We re-send these so the relay can decide: if it already transcribed them it
-        // will silently reject via completedIds (no loop); if the relay is fresh or
-        // never received them it will queue them normally.
-        // We do NOT send clear_completed — that was the root cause of the loop.
-        const recentlyDetected = Array.from(processedBaseUrls.entries())
-          .filter(([_, data]) => Date.now() - data.timestamp < 300000);
-
-        const totalCount = pendingCount + recentlyDetected.length;
-
-        if (totalCount === 0) {
-          sendResponse({ success: true, count: 0 });
-          return;
-        }
-
-        // Flush debounce queue first
-        await flushPendingStreams();
-
-        // Re-offer recently detected streams to the relay (relay deduplicates)
-        for (const [streamId, data] of recentlyDetected) {
-          console.log(`🔄 [POPUP] Re-offering to relay: ${streamId}`);
-          await sendStreamToRelay(streamId, data.url, [], { source: 'popup-requeue' });
-        }
-        
-        sendResponse({ success: true, count: totalCount });
+        const flushed = await flushPendingStreams();
+        sendResponse({ success: true, count: flushed.count });
       } catch (error) {
         console.error('❌ [POPUP] Error flushing streams:', error);
         sendResponse({ success: false, error: friendlyError(error) });

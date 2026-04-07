@@ -5,9 +5,19 @@ document.getElementById('queueAll').addEventListener('click', async () => {
   statusDiv.style.display = 'block';
   
   try {
-    // Send message to background to flush all pending streams
-    chrome.runtime.sendMessage({ 
-      action: 'flushAllStreams'
+    const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+    const tab = tabs && tabs[0];
+
+    if (!tab || !tab.id) {
+      statusDiv.className = 'error';
+      statusDiv.textContent = 'No active tab found.';
+      return;
+    }
+
+    // Queue everything on the page + flush debounced sniffer queue (does not re-send old jobs)
+    chrome.runtime.sendMessage({
+      action: 'queueAllVideos',
+      tabId: tab.id
     }, (response) => {
       if (chrome.runtime.lastError) {
         statusDiv.className = 'error';
