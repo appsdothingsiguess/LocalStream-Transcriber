@@ -91,8 +91,8 @@ function shouldIgnoreUrl(url) {
     return true;
   }
   
-  // Ignore URLs containing specific keywords
-  const ignoreKeywords = ['segment', 'fragment', 'caption', 'subtitle'];
+  // Ignore manifest-like URLs that are clearly caption/subtitle assets.
+  const ignoreKeywords = ['caption', 'subtitle', 'servewebvtt', 'captionasset'];
   for (const keyword of ignoreKeywords) {
     if (urlLower.includes(keyword)) {
       console.log(`🚫 [FILTER] Ignoring URL with keyword "${keyword}":`, url.substring(0, 100));
@@ -137,6 +137,12 @@ function getStreamPriority(url) {
 /**
  * Extract unique identifier from URL (for deduplication)
  */
+function normalizeStreamPath(pathname) {
+  return pathname
+    .replace(/_(low|medium|high|[0-9]+p|[0-9]+k)/gi, '')
+    .replace(/\/(low|medium|high|[0-9]+p|[0-9]+k)\//gi, '/');
+}
+
 function extractStreamId(url) {
   try {
     // Try to extract Kaltura entryId if present
@@ -145,32 +151,42 @@ function extractStreamId(url) {
       return `kaltura_${kalturaMatch[1]}`;
     }
     
-    // Otherwise use the base URL without query params and quality indicators
     const urlObj = new URL(url);
-    const pathname = urlObj.pathname
-      .replace(/_(low|medium|high|[0-9]+p|[0-9]+k)/gi, '')
-      .replace(/\/(low|medium|high|[0-9]+p|[0-9]+k)\//gi, '/');
-    
-    return `${urlObj.host}${pathname}`;
+    const pathname = normalizeStreamPath(urlObj.pathname);
+    const stableParams = new URLSearchParams();
+
+    for (const key of ['entryId', 'id', 'videoId', 'assetId']) {
+      const values = urlObj.searchParams.getAll(key);
+      values.sort();
+      for (const value of values) {
+        stableParams.append(key, value);
+      }
+    }
+
+    const stableQuery = stableParams.toString();
+    return `${urlObj.host}${pathname}${stableQuery ? `?${stableQuery}` : ''}`;
   } catch (error) {
     console.error('🚫 [FILTER] Error extracting stream ID:', error);
     return url;
   }
 }
 
-// Pending streams waiting for better quality (debounce buffer)
-const pendingStreams = new Map(); // streamId -> { url, priority, timeout, cookies, details }
+const CAPTURE_RETENTION_MS = 300000;
 
-// Track which base URLs we've already processed (to avoid multiple quality versions)
-const processedBaseUrls = new Map(); // streamId -> { url, timestamp, priority }
+// Pending streams are captured candidates waiting for an explicit manual queue action.
+const pendingStreams = new Map(); // streamId -> { url, priority, cookies, details, timestamp }
+
+// Track which streams were already sent to the relay, preserving cookies for explicit re-use paths.
+const processedBaseUrls = new Map(); // streamId -> { url, timestamp, priority, cookies, details }
 
 /**
- * Process a detected stream with intelligent debouncing
- * Waits 2 seconds to see if a better quality stream appears
+ * Capture a detected stream candidate without auto-queueing it.
+ * Manual actions decide when captured streams are flushed to the relay.
  */
-async function processStream(url, cookies, details) {
+async function processStream(url, cookies, details = {}) {
   const streamId = extractStreamId(url);
   const priority = getStreamPriority(url);
+  const timestamp = Date.now();
   
   console.log('📥 [FILTER] Stream detected:', {
     url: url.substring(0, 100) + '...',
@@ -178,131 +194,176 @@ async function processStream(url, cookies, details) {
     priority: priority
   });
   
-  // Check if we've already processed this stream recently
-  if (processedBaseUrls.has(streamId)) {
-    const processed = processedBaseUrls.get(streamId);
-    const timeSinceProcessed = Date.now() - processed.timestamp;
-    
-    if (timeSinceProcessed < 60000) { // 60 second window
-      if (priority <= processed.priority) {
-        console.log('⏭️  [FILTER] Skipping - already processed better or equal stream:', {
-          current: priority,
-          processed: processed.priority
-        });
-        return;
-      } else {
-        console.log('🔄 [FILTER] Found better quality stream, replacing:', {
-          old: processed.priority,
-          new: priority
-        });
-      }
-    }
+  const processed = processedBaseUrls.get(streamId);
+  if (processed && priority <= processed.priority) {
+    console.log('⏭️  [FILTER] Already queued better or equal stream this session:', {
+      current: priority,
+      processed: processed.priority
+    });
+    return { captured: false, streamId, reason: 'already-processed' };
   }
-  
-  // Check if we have a pending stream for this ID
-  if (pendingStreams.has(streamId)) {
-    const pending = pendingStreams.get(streamId);
-    
-    if (priority > pending.priority) {
-      // Found a better stream, replace it
-      console.log('⬆️  [FILTER] Upgrading pending stream:', {
-        oldPriority: pending.priority,
-        newPriority: priority,
-        oldUrl: pending.url.substring(0, 80),
-        newUrl: url.substring(0, 80)
-      });
-      
-      // Cancel old timeout
-      clearTimeout(pending.timeout);
-      
-      // Set new pending stream with 2-second debounce
-      const timeout = setTimeout(() => {
-        sendStreamToRelay(streamId, url, cookies, details);
-      }, 2000);
-      
-      pendingStreams.set(streamId, {
-        url: url,
-        priority: priority,
-        timeout: timeout,
-        cookies: cookies,
-        details: details
-      });
-    } else {
-      console.log('⏭️  [FILTER] Pending stream is better quality, ignoring:', {
-        pending: pending.priority,
-        new: priority
-      });
-    }
+
+  if (processed && priority > processed.priority) {
+    console.log('🔄 [FILTER] Captured better-quality stream after a prior manual queue:', {
+      old: processed.priority,
+      new: priority
+    });
+  }
+
+  const pending = pendingStreams.get(streamId);
+  if (pending && priority < pending.priority) {
+    console.log('⏭️  [FILTER] Pending capture is already better quality:', {
+      pending: pending.priority,
+      incoming: priority
+    });
+    return { captured: false, streamId, reason: 'lower-priority' };
+  }
+
+  if (pending) {
+    console.log('⬆️  [FILTER] Updating captured stream candidate:', {
+      oldPriority: pending.priority,
+      newPriority: priority,
+      oldUrl: pending.url.substring(0, 80),
+      newUrl: url.substring(0, 80)
+    });
   } else {
-    // New stream, add to pending with 2-second debounce
-    console.log('⏳ [FILTER] Adding to pending queue (2s debounce):', {
+    console.log('📝 [FILTER] Captured stream for manual queueing:', {
       streamId: streamId,
       priority: priority
     });
-    
-    const timeout = setTimeout(() => {
-      sendStreamToRelay(streamId, url, cookies, details);
-    }, 2000);
-    
-    pendingStreams.set(streamId, {
-      url: url,
-      priority: priority,
-      timeout: timeout,
-      cookies: cookies,
-      details: details
-    });
   }
+
+  pendingStreams.set(streamId, {
+    url,
+    priority,
+    cookies: cookies || [],
+    details: details || {},
+    timestamp
+  });
+
+  return { captured: true, streamId, priority };
+}
+
+function captureMatchesTab(candidate, tab) {
+  if (!tab) {
+    return true;
+  }
+
+  const details = candidate?.details || {};
+  if (details.tabId != null && details.tabId >= 0) {
+    return details.tabId === tab.id;
+  }
+
+  if (details.initiator && tab.url) {
+    return details.initiator === tab.url;
+  }
+
+  return true;
+}
+
+function getRecentCapturedStreams({ maxAgeMs = CAPTURE_RETENTION_MS, tab = null } = {}) {
+  const cutoff = Date.now() - maxAgeMs;
+  const candidates = [];
+
+  for (const [streamId, pending] of pendingStreams.entries()) {
+    if ((pending.timestamp || 0) >= cutoff && captureMatchesTab(pending, tab)) {
+      candidates.push({
+        streamId,
+        url: pending.url,
+        priority: pending.priority,
+        cookies: pending.cookies || [],
+        details: pending.details || {},
+        timestamp: pending.timestamp || 0,
+        source: 'pending'
+      });
+    }
+  }
+
+  for (const [streamId, data] of processedBaseUrls.entries()) {
+    if ((data.timestamp || 0) >= cutoff && captureMatchesTab(data, tab)) {
+      candidates.push({
+        streamId,
+        url: data.url,
+        priority: data.priority,
+        cookies: data.cookies || [],
+        details: data.details || {},
+        timestamp: data.timestamp || 0,
+        source: 'processed'
+      });
+    }
+  }
+
+  candidates.sort((a, b) => b.timestamp - a.timestamp || b.priority - a.priority);
+  return candidates;
 }
 
 /**
- * Send stream to relay server after debounce period
+ * Send a captured stream to the relay server.
  */
-async function sendStreamToRelay(streamId, url, cookies, details) {
-  console.log('🚀 [FILTER] Sending stream to relay (debounce complete):', {
+async function sendStreamToRelay(streamId, url, cookies, details = {}) {
+  console.log('🚀 [FILTER] Sending stream to relay:', {
     streamId: streamId,
     url: url.substring(0, 100) + '...'
   });
   
-  // Remove from pending and get priority
   const pending = pendingStreams.get(streamId);
+  const processed = processedBaseUrls.get(streamId);
   const priority = pending ? pending.priority : getStreamPriority(url);
-  pendingStreams.delete(streamId);
-  processedBaseUrls.set(streamId, { url, timestamp: Date.now(), priority });
+  const relayCookies = (pending?.cookies && pending.cookies.length > 0)
+    ? pending.cookies
+    : (cookies && cookies.length > 0)
+      ? cookies
+      : (processed?.cookies || []);
+  const relayDetails = {
+    ...(processed?.details || {}),
+    ...(pending?.details || {}),
+    ...(details || {})
+  };
   
   try {
-    // Ensure WebSocket connection is open
     let activeSocket;
     try {
       activeSocket = await connect();
     } catch (error) {
-      console.log('ℹ️  [FILTER] Relay not reachable — stream buffered, will retry on next detection');
-      return;
+      console.log('ℹ️  [FILTER] Relay not reachable — captured stream kept locally until manual retry');
+      return false;
     }
     
-    // Send stream data to relay server
     if (activeSocket.readyState === WebSocket.OPEN) {
       const payload = {
         type: 'stream_found',
-        url: url,
-        cookies: cookies,
-        source: 'sniffer',
-        pageUrl: details.initiator || 'unknown',
-        timestamp: Date.now()
+        url,
+        cookies: relayCookies,
+        source: relayDetails.source || 'sniffer-manual',
+        pageUrl: relayDetails.initiator || relayDetails.pageUrl || 'unknown',
+        timestamp: Date.now(),
+        canonicalId: streamId
       };
       
       const message = JSON.stringify(payload);
       activeSocket.send(message);
+      pendingStreams.delete(streamId);
+      processedBaseUrls.set(streamId, {
+        url,
+        timestamp: Date.now(),
+        priority,
+        cookies: relayCookies,
+        details: relayDetails
+      });
       console.log('✅ [FILTER] Stream sent to relay server');
+      return true;
     } else {
       console.warn('⚠️  [FILTER] WebSocket not open, cannot send stream data');
+      return false;
     }
     
   } catch (error) {
     console.error('❌ [FILTER] Error sending stream to relay:', error);
+    return false;
   }
 }
 
-async function queueSingleAudioItem(activeSocket, audioItem, tab) {
+async function queueSingleAudioItem(activeSocket, audioItem, tab, source = 'manual-select') {
   if (!audioItem) {
     return { queued: false, reason: 'No media selected.' };
   }
@@ -318,7 +379,7 @@ async function queueSingleAudioItem(activeSocket, audioItem, tab) {
       mimeType: audioItem.mimeType,
       size: audioItem.size,
       originalUrl: audioItem.originalUrl || 'blob:',
-      source: 'manual-select',
+      source,
       pageUrl: tab.url || 'unknown',
       timestamp: Date.now()
     }));
@@ -331,14 +392,15 @@ async function queueSingleAudioItem(activeSocket, audioItem, tab) {
 
     if (urlLower.includes('.m3u8') || urlLower.endsWith('.mpd')) {
       const cookies = await chrome.cookies.getAll({ url });
-      // Manual selection should bypass quality/dedup filters and enqueue immediately.
       const streamId = extractStreamId(url);
-      await sendStreamToRelay(streamId, url, cookies, {
+      const queued = await sendStreamToRelay(streamId, url, cookies, {
         tabId: tab.id,
         initiator: tab.url || 'unknown',
-        source: 'manual-select'
+        source
       });
-      return { queued: true };
+      return queued
+        ? { queued: true }
+        : { queued: false, reason: 'Failed to send selected stream to relay.' };
     }
 
     if (activeSocket.readyState !== WebSocket.OPEN) {
@@ -348,7 +410,7 @@ async function queueSingleAudioItem(activeSocket, audioItem, tab) {
     activeSocket.send(JSON.stringify({
       type: 'url',
       url,
-      source: 'manual-select',
+      source,
       pageUrl: tab.url || 'unknown',
       timestamp: Date.now()
     }));
@@ -358,39 +420,127 @@ async function queueSingleAudioItem(activeSocket, audioItem, tab) {
   return { queued: false, reason: 'Unsupported media type returned by content script.' };
 }
 
-function getMostRecentCapturedStream() {
-  const pendingEntries = Array.from(pendingStreams.entries()).map(([streamId, pending]) => ({
-    streamId,
-    url: pending.url,
-    cookies: pending.cookies || [],
-    details: pending.details || {},
-    timestamp: Date.now(),
-    source: 'pending'
-  }));
-
-  const processedEntries = Array.from(processedBaseUrls.entries()).map(([streamId, data]) => ({
-    streamId,
-    url: data.url,
-    cookies: [],
-    details: {},
-    timestamp: data.timestamp || 0,
-    source: 'processed'
-  }));
-
-  const candidates = [...pendingEntries, ...processedEntries]
-    .filter(item => !!item.url)
-    .sort((a, b) => b.timestamp - a.timestamp);
-
+function getMostRecentCapturedStream(tab = null) {
+  const candidates = getRecentCapturedStreams({ tab });
   return candidates[0] || null;
+}
+
+async function sendMessageToTabWithInjection(tabId, message) {
+  try {
+    return await chrome.tabs.sendMessage(tabId, message);
+  } catch (sendError) {
+    if (!sendError.message.includes('Could not establish connection')) {
+      throw sendError;
+    }
+
+    console.log('🔄 [TAB] Content script not loaded, attempting to inject...');
+    await chrome.scripting.executeScript({
+      target: { tabId },
+      files: ['content.js']
+    });
+    await new Promise(resolve => setTimeout(resolve, 500));
+    return chrome.tabs.sendMessage(tabId, message);
+  }
+}
+
+async function requireRelaySocket() {
+  const activeSocket = await connect();
+  if (activeSocket.readyState !== WebSocket.OPEN) {
+    throw new Error('LocalStream server is not running. Open START.bat and choose option 2 (Browser extension), then try again.');
+  }
+  return activeSocket;
+}
+
+async function getCurrentActiveTab() {
+  const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+  const tab = tabs && tabs[0];
+  if (!tab || !tab.id) {
+    throw new Error('No active tab found.');
+  }
+  return tab;
+}
+
+async function queueCapturedStreamsForTab(tab, source, extraStreams = []) {
+  const activeSocket = await requireRelaySocket();
+  const pageUrl = tab.url || 'unknown';
+  let directCount = 0;
+
+  for (const audioItem of extraStreams) {
+    if (!audioItem) {
+      continue;
+    }
+
+    if (audioItem.type === 'url' && audioItem.url) {
+      const url = audioItem.url;
+      const urlLower = url.toLowerCase();
+
+      if (urlLower.includes('.m3u8') || urlLower.endsWith('.mpd')) {
+        const cookies = await chrome.cookies.getAll({ url });
+        await processStream(url, cookies, {
+          tabId: tab.id,
+          initiator: pageUrl,
+          source
+        });
+        continue;
+      }
+    }
+
+    const queueResult = await queueSingleAudioItem(activeSocket, audioItem, tab, source);
+    if (queueResult.queued) {
+      directCount++;
+    }
+  }
+
+  const flushed = await flushPendingStreams(tab);
+  let totalCount = directCount + flushed.count;
+
+  if (totalCount === 0) {
+    const recentStreams = getRecentCapturedStreams({ tab });
+    for (const stream of recentStreams) {
+      const queued = await sendStreamToRelay(stream.streamId, stream.url, stream.cookies || [], {
+        ...stream.details,
+        tabId: tab.id,
+        initiator: pageUrl,
+        source: `${source}-fallback`,
+        fallbackSource: stream.source
+      });
+      if (queued) {
+        totalCount++;
+      }
+    }
+  }
+
+  return { count: totalCount };
+}
+
+async function queueAllVideosForTab(tabId, source = 'manual-trigger') {
+  const tab = await chrome.tabs.get(tabId);
+  const response = await sendMessageToTabWithInjection(tabId, {
+    action: 'findAudioLinks',
+    manualTrigger: true,
+    timestamp: Date.now()
+  });
+
+  return queueCapturedStreamsForTab(tab, source, response?.audioData || []);
+}
+
+async function runManualTrigger(tabId) {
+  const tab = tabId ? await chrome.tabs.get(tabId) : await getCurrentActiveTab();
+  return queueAllVideosForTab(tab.id, 'manual-trigger');
 }
 
 // Clean up old entries periodically
 setInterval(() => {
   const now = Date.now();
   
-  // Clean up processed URLs older than 5 minutes
+  for (const [streamId, data] of pendingStreams.entries()) {
+    if (now - data.timestamp > CAPTURE_RETENTION_MS) {
+      pendingStreams.delete(streamId);
+    }
+  }
+
   for (const [streamId, data] of processedBaseUrls.entries()) {
-    if (now - data.timestamp > 300000) {
+    if (now - data.timestamp > CAPTURE_RETENTION_MS) {
       processedBaseUrls.delete(streamId);
     }
   }
@@ -419,11 +569,10 @@ chrome.webRequest.onBeforeRequest.addListener(
       console.log('🎯 [FILTER] Valid stream detected:', url.substring(0, 100) + '...');
       
       try {
-        // Extract cookies for this domain
         const cookies = await chrome.cookies.getAll({ url: url });
         console.log(`🍪 [FILTER] Found ${cookies.length} cookies`);
         
-        // STEP 2: Process with intelligent debouncing and prioritization
+        // Capture the stream locally so manual actions can explicitly queue it later.
         await processStream(url, cookies, details);
         
       } catch (error) {
@@ -435,28 +584,29 @@ chrome.webRequest.onBeforeRequest.addListener(
 );
 
 /**
- * Flush pending streams immediately (skip debounce)
- * Used when user manually triggers download
+ * Flush captured streams immediately when the user explicitly triggers queueing.
  */
 /** @returns {{ count: number, streamIds: Set<string> }} */
-async function flushPendingStreams() {
-  console.log('🚀 [FILTER] Flushing pending streams (manual trigger)');
+async function flushPendingStreams(tab = null) {
+  console.log('🚀 [FILTER] Flushing captured streams (manual trigger)');
   
-  const streamsToFlush = Array.from(pendingStreams.entries());
+  const streamsToFlush = Array.from(pendingStreams.entries())
+    .filter(([, pending]) => captureMatchesTab(pending, tab))
+    .sort((a, b) => b[1].priority - a[1].priority || a[1].timestamp - b[1].timestamp);
   const streamIds = new Set();
+  let count = 0;
   
   for (const [streamId, pending] of streamsToFlush) {
-    // Cancel the timeout
-    clearTimeout(pending.timeout);
-    streamIds.add(streamId);
-    
-    // Send immediately
     console.log(`⚡ [FILTER] Sending pending stream immediately: ${streamId}`);
-    await sendStreamToRelay(streamId, pending.url, pending.cookies, pending.details);
+    const sent = await sendStreamToRelay(streamId, pending.url, pending.cookies, pending.details);
+    if (sent) {
+      streamIds.add(streamId);
+      count++;
+    }
   }
   
-  console.log(`✅ [FILTER] Flushed ${streamsToFlush.length} pending stream(s)`);
-  return { count: streamsToFlush.length, streamIds };
+  console.log(`✅ [FILTER] Flushed ${count} captured stream(s)`);
+  return { count, streamIds };
 }
 
 // Optional: Manual trigger via keyboard shortcut
@@ -464,149 +614,20 @@ chrome.commands.onCommand.addListener(async (cmd) => {
   console.log(`🎹 [COMMAND] Command received: ${cmd}`);
   
   if (cmd === "grab-mp3") {
-    console.log("🎯 [COMMAND] Manual trigger - activating stream detection");
+    console.log("🎯 [COMMAND] Manual trigger - queueing active tab");
     
     try {
-      // Step 1: Ensure WebSocket connection
-      const activeSocket = await connect();
-      console.log("🔌 [COMMAND] WebSocket connection verified, readyState:", activeSocket.readyState);
-      
-      if (activeSocket.readyState !== WebSocket.OPEN) {
-        console.warn("⚠️  [COMMAND] WebSocket not open, cannot proceed");
-        return;
-      }
-      
-      // Step 2: Send ping to verify connection
-      activeSocket.send(JSON.stringify({ 
-        type: 'ping', 
-        timestamp: Date.now() 
-      }));
-      console.log("📡 [COMMAND] Ping sent to relay server");
-      
-      // Step 3: Flush any pending streams immediately (skip debounce)
-      await flushPendingStreams();
-      
-      // Step 4: Query all tabs and trigger content script search
-      try {
-        const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
-        
-        if (tabs.length === 0) {
-          console.warn("⚠️  [COMMAND] No active tabs found");
-          return;
-        }
-        
-        // Send message to active tab's content script
-        for (const tab of tabs) {
-          if (tab.id) {
-            console.log(`📨 [COMMAND] Sending search request to tab ${tab.id}: ${tab.url}`);
-            
-            try {
-              const response = await chrome.tabs.sendMessage(tab.id, {
-                action: 'findAudioLinks',
-                manualTrigger: true,
-                timestamp: Date.now()
-              });
-              
-              if (response && response.success) {
-                console.log(`✅ [COMMAND] Content script found ${response.audioData?.length || 0} audio/video element(s)`);
-                
-                // Process any found URLs or blob data
-                if (response.audioData && response.audioData.length > 0) {
-                  for (const audioItem of response.audioData) {
-                    // Handle blob data (already converted to base64 in content script)
-                    if (audioItem.type === 'blob' && audioItem.data) {
-                      console.log(`📦 [COMMAND] Found blob data from content script (${audioItem.size} bytes, ${audioItem.mimeType})`);
-                      
-                      try {
-                        if (activeSocket.readyState === WebSocket.OPEN) {
-                          const payload = {
-                            type: 'blob',
-                            data: audioItem.data,
-                            mimeType: audioItem.mimeType,
-                            size: audioItem.size,
-                            originalUrl: audioItem.originalUrl || 'blob:',
-                            source: 'content-script',
-                            pageUrl: tab.url || 'unknown',
-                            timestamp: Date.now()
-                          };
-                          
-                          activeSocket.send(JSON.stringify(payload));
-                          console.log(`✅ [COMMAND] Blob data sent to relay server`);
-                        }
-                      } catch (error) {
-                        console.error(`❌ [COMMAND] Error sending blob data:`, error);
-                      }
-                    }
-                    // Handle regular URLs (streams)
-                    else if (audioItem.type === 'url' && audioItem.url) {
-                      const url = audioItem.url;
-                      const urlLower = url.toLowerCase();
-                      
-                      // Check if it's a stream URL
-                      if (urlLower.includes('.m3u8') || urlLower.endsWith('.mpd')) {
-                        console.log(`🎯 [COMMAND] Found stream URL from content script: ${url.substring(0, 100)}`);
-                        
-                        // Get cookies and process
-                        try {
-                          const cookies = await chrome.cookies.getAll({ url: url });
-                          await processStream(url, cookies, {
-                            initiator: tab.url || 'unknown',
-                            tabId: tab.id
-                          });
-                        } catch (error) {
-                          console.error(`❌ [COMMAND] Error processing stream from content script:`, error);
-                        }
-                      } else {
-                        // Regular media URL (not a stream manifest)
-                        console.log(`🎵 [COMMAND] Found media URL from content script: ${url.substring(0, 100)}`);
-                        
-                        try {
-                          if (activeSocket.readyState === WebSocket.OPEN) {
-                            const payload = {
-                              type: 'url',
-                              url: url,
-                              source: 'content-script',
-                              pageUrl: tab.url || 'unknown',
-                              timestamp: Date.now()
-                            };
-                            
-                            activeSocket.send(JSON.stringify(payload));
-                            console.log(`✅ [COMMAND] Media URL sent to relay server`);
-                          }
-                        } catch (error) {
-                          console.error(`❌ [COMMAND] Error sending media URL:`, error);
-                        }
-                      }
-                    }
-                  }
-                }
-              } else {
-                console.log(`ℹ️  [COMMAND] Content script response:`, response);
-              }
-            } catch (error) {
-              // Content script might not be loaded on this page
-              console.log(`ℹ️  [COMMAND] Could not send message to tab ${tab.id}:`, error.message);
-              console.log(`   (This is normal for pages without content script support)`);
-            }
-          }
-        }
-      } catch (error) {
-        console.error("❌ [COMMAND] Error querying tabs:", error);
-      }
-      
-      console.log("✅ [COMMAND] Manual trigger complete");
-      
+      const result = await runManualTrigger();
+      console.log(`✅ [COMMAND] Manual trigger complete (${result.count} item(s) queued)`);
     } catch (error) {
       console.error("❌ [COMMAND] Failed to process manual trigger:", error);
     }
   }
 });
 
-// Establish connection on extension load
-console.log('🎵 MP3 Grabber: Background script loaded — stream filtering active');
+console.log('🎵 MP3 Grabber: Background script loaded — stream capture active');
 // Do NOT auto-connect here. The relay server may not be running yet.
-// Connection is established on demand when a stream is detected or the
-// user clicks a popup button.
+// Connection is established only when the user explicitly queues something.
 
 // Handle popup messages
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
@@ -615,113 +636,8 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     
     (async () => {
       try {
-        const activeSocket = await connect();
-        
-        if (activeSocket.readyState !== WebSocket.OPEN) {
-          sendResponse({ success: false, error: 'LocalStream server is not running. Open START.bat and choose option 2 (Browser extension), then try again.' });
-          return;
-        }
-        
-        const tab = await chrome.tabs.get(request.tabId);
-        const pageUrl = tab.url || 'unknown';
-
-        // Flush debounced sniffer queue first (anything already pending before this action)
-        const flushedFirst = await flushPendingStreams();
-        
-        // Query the tab for videos
-        let response;
-        try {
-          response = await chrome.tabs.sendMessage(request.tabId, {
-            action: 'findAudioLinks',
-            manualTrigger: true,
-            timestamp: Date.now()
-          });
-        } catch (sendError) {
-          // Content script might not be loaded yet, try to inject it
-          if (sendError.message.includes('Could not establish connection')) {
-            console.log('🔄 [POPUP] Content script not loaded, attempting to inject...');
-            try {
-              await chrome.scripting.executeScript({
-                target: { tabId: request.tabId },
-                files: ['content.js']
-              });
-              // Wait a bit for script to initialize
-              await new Promise(resolve => setTimeout(resolve, 500));
-              // Try again
-              response = await chrome.tabs.sendMessage(request.tabId, {
-                action: 'findAudioLinks',
-                manualTrigger: true,
-                timestamp: Date.now()
-              });
-            } catch (injectError) {
-              throw new Error(`Failed to inject content script: ${injectError.message}`);
-            }
-          } else {
-            throw sendError;
-          }
-        }
-        
-        let count = 0;
-        
-        // Skip URLs we already sent in the initial pending flush (same tab often lists the same manifest)
-        const sentIds = new Set(flushedFirst.streamIds);
-        if (response && response.audioData) {
-          for (const audioItem of response.audioData) {
-            if (audioItem.type === 'url' && audioItem.url) {
-              const url = audioItem.url;
-              const urlLower = url.toLowerCase();
-              
-              if (urlLower.includes('.m3u8') || urlLower.endsWith('.mpd')) {
-                const streamId = extractStreamId(url);
-                if (sentIds.has(streamId)) {
-                  continue;
-                }
-                sentIds.add(streamId);
-                const cookies = await chrome.cookies.getAll({ url: url });
-                // Send immediately — do not use processStream() here or items stay in the 2s debounce queue.
-                await sendStreamToRelay(streamId, url, cookies, {
-                  tabId: request.tabId,
-                  initiator: pageUrl,
-                  source: 'popup-queue-all'
-                });
-                count++;
-              }
-            }
-          }
-        }
-        
-        // Catch any streams that hit the debounce buffer while we scanned the page
-        const flushedLast = await flushPendingStreams();
-
-        let totalCount = flushedFirst.count + count + flushedLast.count;
-
-        // Many players (Kaltura, etc.) never put .m3u8 on <video> — only the network sniffer sees them.
-        // If nothing was pending and the page scan found no manifests, re-offer what we already captured.
-        // relay.js deduplicates by Kaltura entryId (queue / active job / completed), so this is safe.
-        if (totalCount === 0) {
-          const now = Date.now();
-          const recent = Array.from(processedBaseUrls.entries()).filter(
-            ([_, data]) => now - data.timestamp < 300000
-          );
-          let reoffered = 0;
-          for (const [streamId, data] of recent) {
-            if (sentIds.has(streamId)) {
-              continue;
-            }
-            sentIds.add(streamId);
-            console.log(
-              `🔄 [POPUP] Re-offering sniffer-captured stream (no manifest in DOM): ${streamId}`
-            );
-            await sendStreamToRelay(streamId, data.url, [], {
-              initiator: pageUrl,
-              source: 'popup-queue-all-fallback'
-            });
-            reoffered++;
-          }
-          totalCount = reoffered;
-        }
-
-        sendResponse({ success: true, count: totalCount });
+        const result = await queueAllVideosForTab(request.tabId, 'popup-queue-all');
+        sendResponse({ success: true, count: result.count });
       } catch (error) {
         console.error('❌ [POPUP] Error queuing videos:', error);
         sendResponse({ success: false, error: friendlyError(error) });
@@ -755,12 +671,16 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   }
   
   if (request.action === 'manualTrigger') {
-    chrome.commands.onCommand.addListener((cmd) => {
-      if (cmd === 'grab-mp3') {
-        // Trigger existing manual logic
+    (async () => {
+      try {
+        const result = await runManualTrigger(request.tabId);
+        sendResponse({ success: true, count: result.count });
+      } catch (error) {
+        console.error('❌ [POPUP] Manual trigger failed:', error);
+        sendResponse({ success: false, error: friendlyError(error) });
       }
-    });
-    sendResponse({ success: true });
+    })();
+    return true;
   }
 
   if (request.action === 'queueSingleVideo') {
@@ -774,29 +694,17 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 
         let response;
         try {
-          response = await chrome.tabs.sendMessage(request.tabId, {
+          response = await sendMessageToTabWithInjection(request.tabId, {
             action: 'selectSingleVideo',
             timestamp: Date.now()
           });
         } catch (sendError) {
-          if (sendError.message.includes('Could not establish connection')) {
-            await chrome.scripting.executeScript({
-              target: { tabId: request.tabId },
-              files: ['content.js']
-            });
-            await new Promise(resolve => setTimeout(resolve, 500));
-            response = await chrome.tabs.sendMessage(request.tabId, {
-              action: 'selectSingleVideo',
-              timestamp: Date.now()
-            });
-          } else {
-            throw sendError;
-          }
+          throw sendError;
         }
 
         const tab = await chrome.tabs.get(request.tabId);
         if (response && response.success && response.selected) {
-          const queueResult = await queueSingleAudioItem(activeSocket, response.selected, tab);
+          const queueResult = await queueSingleAudioItem(activeSocket, response.selected, tab, 'manual-select');
           if (!queueResult.queued) {
             sendResponse({ success: false, error: queueResult.reason || 'Failed to queue selected video.' });
             return;
@@ -808,7 +716,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 
         // Fallback: if Canvas does not expose a selectable <video src/currentSrc>,
         // queue the most recent captured stream from network sniffer state.
-        const fallbackStream = getMostRecentCapturedStream();
+        const fallbackStream = getMostRecentCapturedStream(tab);
         if (!fallbackStream) {
           sendResponse({
             success: false,
@@ -817,7 +725,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
           return;
         }
 
-        await sendStreamToRelay(
+        const queued = await sendStreamToRelay(
           fallbackStream.streamId,
           fallbackStream.url,
           fallbackStream.cookies || [],
@@ -829,6 +737,11 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
             fallbackSource: fallbackStream.source
           }
         );
+
+        if (!queued) {
+          sendResponse({ success: false, error: 'Failed to send the captured stream to the relay.' });
+          return;
+        }
 
         sendResponse({ success: true, count: 1, mode: 'fallback-stream' });
       } catch (error) {

@@ -11,7 +11,7 @@
     "commands": {
       "grab-mp3": {
         "suggested_key": { "default": "Ctrl+Shift+M" },
-        "description": "Trigger stream detection and capture"
+        "description": "Queue captured stream from active tab"
       }
     },
     "content_scripts": [

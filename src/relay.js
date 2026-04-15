@@ -1,6 +1,6 @@
 // relay.js
 import express from 'express';
-import { WebSocketServer } from 'ws';
+import { WebSocketServer, WebSocket } from 'ws';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { createWriteStream, unlink, existsSync, mkdirSync, writeFileSync, readdirSync, statSync, readFileSync } from 'fs';
@@ -14,6 +14,12 @@ function dbg(msg) { if (DEBUG) console.log(`[DBG] ${msg}`); }
 // ============================================================================
 // JOB QUEUE AND DEDUPLICATION SYSTEM
 // ============================================================================
+
+function normalizeStreamPath(pathname) {
+  return pathname
+    .replace(/_(low|medium|high|[0-9]+p|[0-9]+k)/gi, '')
+    .replace(/\/(low|medium|high|[0-9]+p|[0-9]+k)\//gi, '/');
+}
 
 class JobQueue {
   constructor() {
@@ -37,33 +43,53 @@ class JobQueue {
       return kalturaMatch[1];
     }
     
-    // For non-Kaltura URLs, use the full URL as the identifier
-    return url;
+    try {
+      const urlObj = new URL(url);
+      const pathname = normalizeStreamPath(urlObj.pathname);
+      const stableParams = new URLSearchParams();
+
+      for (const key of ['entryId', 'id', 'videoId', 'assetId']) {
+        const values = urlObj.searchParams.getAll(key);
+        values.sort();
+        for (const value of values) {
+          stableParams.append(key, value);
+        }
+      }
+
+      const stableQuery = stableParams.toString();
+      return `${urlObj.host}${pathname}${stableQuery ? `?${stableQuery}` : ''}`;
+    } catch {
+      return url;
+    }
   }
 
   /**
    * Check if a job with this entryId is already queued or processing
    */
-  isDuplicate(entryId) {
+  getDuplicateReason(entryId) {
     if (!entryId) return false;
     
     // Check if currently processing
     if (this.currentJob && this.currentJob.entryId === entryId) {
-      return true;
+      return 'already downloading';
     }
     
     // Check if in queue
     const inQueue = this.queue.some(job => job.entryId === entryId);
     if (inQueue) {
-      return true;
+      return 'already queued';
     }
     
     // Check if already completed in this session
     if (this.completedIds.has(entryId)) {
-      return true;
+      return 'already done this session';
     }
     
-    return false;
+    return null;
+  }
+
+  isDuplicate(entryId) {
+    return !!this.getDuplicateReason(entryId);
   }
 
   /**
@@ -71,16 +97,14 @@ class JobQueue {
    * Returns true if added, false if duplicate
    */
   enqueue(job) {
-    const entryId = this.extractEntryId(job.url);
+    const entryId = job.entryId || this.extractEntryId(job.url);
     job.entryId = entryId;
     
-    if (this.isDuplicate(entryId)) {
+    const duplicateReason = this.getDuplicateReason(entryId);
+    if (duplicateReason) {
       const id = entryId || 'unknown';
-      let reason = 'already done this session';
-      if (this.currentJob?.entryId === entryId) reason = 'already downloading';
-      else if (this.queue.some(j => j.entryId === entryId)) reason = 'already queued';
-      console.log(`⏭️  Duplicate ignored (${id} — ${reason})`);
-      return false;
+      console.log(`⏭️  Duplicate ignored (${id} — ${duplicateReason})`);
+      return { added: false, entryId, reason: duplicateReason };
     }
     
     console.log(`📡  Stream detected  (${entryId || 'unknown'})`);
@@ -92,7 +116,7 @@ class JobQueue {
       this.processNext();
     }
     
-    return true;
+    return { added: true, entryId, reason: null };
   }
 
   /**
@@ -872,6 +896,13 @@ function downloadFile(url, dest) {
   });
 }
 
+function broadcast(type, payload) {
+  const message = JSON.stringify({ type, payload });
+  wss.clients.forEach(client => {
+    if (client.readyState === WebSocket.OPEN) client.send(message);
+  });
+}
+
 // --- WebSocket Server Logic ---
 wss.on('connection', ws => {
   dbg('Extension connected');
@@ -890,7 +921,7 @@ wss.on('connection', ws => {
 
     try {
       const parsedMessage = JSON.parse(messageString);
-      const { type, url, data, mimeType, size, originalUrl, element, source, pageUrl, cookies } = parsedMessage;
+      const { type, url, data, mimeType, size, originalUrl, element, source, pageUrl, cookies, canonicalId } = parsedMessage;
       
       if (!type) {
         console.warn('⚠️  Received message without a type');
@@ -920,20 +951,12 @@ wss.on('connection', ws => {
       }
 
       const jobId = uuidv4();
-      
-      dbg(`New transcription request: ${jobId}`);
-      const startMessage = JSON.stringify({
-        type: 'new_transcription',
-        payload: { 
-          id: jobId, 
-          source: source || 'unknown',
-          element: element || 'unknown',
-          pageUrl: pageUrl || 'unknown'
-        }
-      });
-      wss.clients.forEach(client => {
-        if (client.readyState === WebSocket.OPEN) client.send(startMessage);
-      });
+      const queueMetadata = {
+        id: jobId,
+        source: source || 'unknown',
+        element: element || 'unknown',
+        pageUrl: pageUrl || 'unknown'
+      };
 
         // Handle stream_found (yt-dlp with cookies)
         if (type === 'stream_found') {
@@ -948,24 +971,19 @@ wss.on('connection', ws => {
           
           if (isSubtitleUrl) {
             dbg(`Skipped subtitle/caption URL: ${url.substring(0, 100)}...`);
-            const skipMessage = JSON.stringify({
-              type: 'transcription_skipped',
-              payload: { 
-                id: jobId, 
-                reason: 'Subtitle/caption file detected',
-                url: url
-              }
-            });
-            wss.clients.forEach(client => {
-              if (client.readyState === WebSocket.OPEN) client.send(skipMessage);
+            broadcast('transcription_skipped', {
+              id: jobId,
+              reason: 'Subtitle/caption file detected',
+              url
             });
             return; // Skip processing this URL
           }
           
           // Add job to queue with handler
-          const added = jobQueue.enqueue({
+          const queueResult = jobQueue.enqueue({
             jobId: jobId,
             url: url,
+            entryId: canonicalId || undefined,
             handler: async () => {
               return new Promise((resolve, reject) => {
                 dbg(`Starting download for job ${jobId}`);
@@ -1208,33 +1226,18 @@ wss.on('connection', ws => {
             }
           });
           
-          if (!added) {
-            // Job was a duplicate, notify client
-            const skipMessage = JSON.stringify({
-              type: 'transcription_skipped',
-              payload: { 
-                id: jobId, 
-                reason: 'Duplicate stream detected (already in queue or processing)',
-                url: url
-              }
-            });
-            wss.clients.forEach(client => {
-              if (client.readyState === WebSocket.OPEN) client.send(skipMessage);
+          if (!queueResult.added) {
+            broadcast('transcription_skipped', {
+              id: jobId,
+              reason: `Duplicate stream detected (${queueResult.reason})`,
+              url
             });
           } else {
-            // Notify client that job was queued
-            const queuedMessage = JSON.stringify({
-              type: 'transcription_queued',
-              payload: { 
-                id: jobId, 
-                queuePosition: jobQueue.getStatus().queueSize,
-                source: source || 'sniffer',
-                element: element || 'stream',
-                pageUrl: pageUrl || 'unknown'
-              }
-            });
-            wss.clients.forEach(client => {
-              if (client.readyState === WebSocket.OPEN) client.send(queuedMessage);
+            dbg(`New transcription request accepted: ${jobId}`);
+            broadcast('new_transcription', queueMetadata);
+            broadcast('transcription_queued', {
+              ...queueMetadata,
+              queuePosition: jobQueue.getStatus().queueSize
             });
           }
           
@@ -1246,9 +1249,11 @@ wss.on('connection', ws => {
           dbg(`Processing blob data (${size} bytes, ${mimeType})...`);
           
           // Add job to queue
-          jobQueue.enqueue({
+          const blobUrl = originalUrl || `blob:${jobId}`;
+          const queueResult = jobQueue.enqueue({
             jobId: jobId,
-            url: originalUrl || 'blob-data',
+            url: blobUrl,
+            entryId: originalUrl ? jobQueue.extractEntryId(originalUrl) : `blob:${jobId}`,
             handler: async () => {
               return new Promise((resolve, reject) => {
                 try {
@@ -1324,20 +1329,20 @@ wss.on('connection', ws => {
               });
             }
           });
+          if (!queueResult.added) {
+            broadcast('transcription_skipped', {
+              id: jobId,
+              reason: `Duplicate upload detected (${queueResult.reason})`,
+              url: blobUrl
+            });
+            return;
+          }
 
-          // Notify client that job was queued
-          const queuedMessage = JSON.stringify({
-            type: 'transcription_queued',
-            payload: { 
-              id: jobId, 
-              queuePosition: jobQueue.getStatus().queueSize,
-              source: source || 'unknown',
-              element: element || 'unknown',
-              pageUrl: pageUrl || 'unknown'
-            }
-          });
-          wss.clients.forEach(client => {
-            if (client.readyState === WebSocket.OPEN) client.send(queuedMessage);
+          dbg(`New transcription request accepted: ${jobId}`);
+          broadcast('new_transcription', queueMetadata);
+          broadcast('transcription_queued', {
+            ...queueMetadata,
+            queuePosition: jobQueue.getStatus().queueSize
           });
 
         } else if (type === 'url') {
@@ -1349,7 +1354,7 @@ wss.on('connection', ws => {
           dbg(`Processing URL download: ${url.substring(0, 100)}...`);
           
           // Add job to queue
-          jobQueue.enqueue({
+          const queueResult = jobQueue.enqueue({
             jobId: jobId,
             url: url,
             handler: async () => {
@@ -1415,20 +1420,20 @@ wss.on('connection', ws => {
               });
             }
           });
+          if (!queueResult.added) {
+            broadcast('transcription_skipped', {
+              id: jobId,
+              reason: `Duplicate URL detected (${queueResult.reason})`,
+              url
+            });
+            return;
+          }
 
-          // Notify client that job was queued
-          const queuedMessage = JSON.stringify({
-            type: 'transcription_queued',
-            payload: { 
-              id: jobId, 
-              queuePosition: jobQueue.getStatus().queueSize,
-              source: source || 'unknown',
-              element: element || 'unknown',
-              pageUrl: pageUrl || 'unknown'
-            }
-          });
-          wss.clients.forEach(client => {
-            if (client.readyState === WebSocket.OPEN) client.send(queuedMessage);
+          dbg(`New transcription request accepted: ${jobId}`);
+          broadcast('new_transcription', queueMetadata);
+          broadcast('transcription_queued', {
+            ...queueMetadata,
+            queuePosition: jobQueue.getStatus().queueSize
           });
           
         } else {

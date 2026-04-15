@@ -45,10 +45,36 @@ document.getElementById('queueAll').addEventListener('click', async () => {
   }
 });
 
-document.getElementById('manualTrigger').addEventListener('click', () => {
-  chrome.runtime.sendMessage({ action: 'manualTrigger' }, () => {
-    window.close();
-  });
+document.getElementById('manualTrigger').addEventListener('click', async () => {
+  const statusDiv = document.getElementById('status');
+  statusDiv.className = '';
+  statusDiv.textContent = 'Queueing captured streams from the active tab...';
+  statusDiv.style.display = 'block';
+
+  try {
+    const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+    const tab = tabs && tabs[0];
+
+    chrome.runtime.sendMessage({ action: 'manualTrigger', tabId: tab?.id }, (response) => {
+      if (chrome.runtime.lastError) {
+        statusDiv.className = 'error';
+        statusDiv.textContent = 'Error: ' + chrome.runtime.lastError.message;
+        return;
+      }
+
+      if (response && response.success) {
+        statusDiv.className = 'success';
+        statusDiv.textContent = `✓ Queued ${response.count || 0} item(s)`;
+        setTimeout(() => window.close(), 1500);
+      } else {
+        statusDiv.className = 'error';
+        statusDiv.textContent = response?.error || 'Manual trigger failed';
+      }
+    });
+  } catch (error) {
+    statusDiv.className = 'error';
+    statusDiv.textContent = 'Error: ' + error.message;
+  }
 });
 
 document.getElementById('queueSingle').addEventListener('click', async () => {

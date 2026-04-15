@@ -2,7 +2,7 @@
 
 ## Overview
 
-A Chrome extension that uses **network sniffing** to automatically detect and capture streaming media (HLS/DASH) from web pages, including authenticated content from Canvas, Kaltura, and Panopto.
+A Chrome extension that uses **network sniffing** to detect and capture streaming media (HLS/DASH) from web pages, including authenticated content from Canvas, Kaltura, and Panopto.
 
 ## Architecture
 
@@ -14,15 +14,16 @@ A Chrome extension that uses **network sniffing** to automatically detect and ca
 1. Extension monitors all network requests in background
 2. Detects `.m3u8` (HLS) and `.mpd` (DASH) manifest requests
 3. Extracts session cookies for the domain
-4. Sends stream URL + cookies to local relay server via WebSocket
-5. Relay server uses `yt-dlp` to download and transcribe
+4. Stores the best captured stream candidate locally in the extension
+5. Sends stream URL + cookies to the local relay server only when you explicitly queue it
+6. Relay server uses `yt-dlp` to download and transcribe
 
 **Key Features:**
-- ✅ Automatic detection (no user action required)
+- ✅ Automatic detection without automatic queueing
 - ✅ Handles authenticated content (session cookies)
 - ✅ Supports HLS and DASH streaming protocols
 - ✅ Works with any domain (`<all_urls>` permission)
-- ✅ Debounce mechanism prevents duplicate captures
+- ✅ Canonical deduplication prevents duplicate logical jobs
 - ✅ Real-time WebSocket communication
 
 ## Installation
@@ -35,12 +36,13 @@ A Chrome extension that uses **network sniffing** to automatically detect and ca
 
 ## Usage
 
-### Automatic Mode (Recommended)
+### Capture Mode
 
 1. **Start relay server**: `npm run setup` → Choose option 2
 2. **Load extension** in Chrome (see Installation above)
 3. **Navigate** to any page with streaming media
-4. **Streams detected automatically** when page loads media
+4. **Play the video** so the extension can capture the stream request
+5. **Queue it manually** from the popup or with `Ctrl+Shift+M`
 
 **Supported platforms:**
 - Canvas LMS lectures
@@ -50,12 +52,14 @@ A Chrome extension that uses **network sniffing** to automatically detect and ca
 - YouTube HLS streams
 - Any site using `.m3u8` or `.mpd` streams
 
-### Manual Mode (Connection Test)
+### Manual Queueing
 
-Press `Ctrl+Shift+M` to:
-- Verify WebSocket connection to relay server
-- Send ping message to test connectivity
-- Check relay server console for `"🏓 Ping received"`
+Press `Ctrl+Shift+M` to queue captured media from the active tab.
+
+Use the popup buttons to:
+- Queue all detected/captured videos on the page
+- Select a single video when Canvas exposes multiple candidates
+- Trigger the same active-tab queue flow as the keyboard shortcut
 
 ## File Structure
 
@@ -63,7 +67,7 @@ Press `Ctrl+Shift+M` to:
 extension/
 ├── manifest.json      # Extension configuration (Manifest V3)
 ├── bg.js             # Background service worker (network sniffer)
-├── content.js        # (DEPRECATED - no longer used)
+├── content.js        # Manual page scan and single-video selection helpers
 └── README.md         # This file
 ```
 
@@ -99,8 +103,11 @@ bg.js: webRequest listener
     │
     ├─ Check if URL contains .m3u8 or .mpd
     ├─ Extract cookies for domain
-    ├─ Debounce (skip if recently sent)
-    └─ Send to WebSocket
+    ├─ Capture best candidate locally
+    └─ Wait for explicit manual queue action
+        │
+        ▼
+    Popup / Shortcut
         │
         ▼
     Relay Server (localhost:8787)
@@ -110,12 +117,13 @@ bg.js: webRequest listener
         └─ Download → Transcribe
 ```
 
-### Debounce Mechanism
+### Capture And Deduplication
 
-To prevent spamming the relay server with duplicate streams:
-- Maintains a `Set` of recently processed URLs
-- Skips processing if URL was seen in last 5 seconds
-- Automatically cleans up old entries
+To prevent duplicate queueing:
+- The extension captures manifests passively but does not auto-send them during playback
+- Captured streams are canonicalized so signed/query-changing URLs map to one logical stream
+- Manual queue actions flush only the best captured candidates
+- The relay applies the same logical stream identity before accepting a job
 
 ### Cookie Extraction
 
@@ -159,10 +167,10 @@ npm run setup
 # Choose option 2
 ```
 
-**Check WebSocket connection:**
-- Press `Ctrl+Shift+M`
-- Open Chrome DevTools → Console (on any page)
-- Look for: `"MP3 Grabber: WebSocket connection opened"`
+**Check manual queueing:**
+- Play the video for a few seconds first so the manifest is captured
+- Then press `Ctrl+Shift+M` or use the popup
+- Open Chrome DevTools → Console and look for capture logs followed by `"Stream sent to relay server"`
 
 ### "WebSocket connection failed"
 
@@ -193,11 +201,11 @@ npm run setup
 - Backward compatible handlers still exist in relay server
 - Check for blob URLs or direct links
 
-### "Cannot read properties of undefined"
+### Playback does not queue automatically
 
-**Cause:** Extension tried to access page before WebSocket connected
+**Expected:** Playback only captures the stream. It will not start a download by itself.
 
-**Fix:** Automatic - extension retries connection
+**Fix:** Use `Ctrl+Shift+M` or the popup after the video starts playing.
 
 ### Cookie extraction fails
 
@@ -299,7 +307,7 @@ npm run setup
 | Permission | Why We Need It | What We Do |
 |------------|---------------|------------|
 | `webRequest` | Detect streaming manifests | Monitor `.m3u8`/`.mpd` requests only |
-| `cookies` | Download authenticated streams | Extract cookies for current domain only |
+| `cookies` | Download authenticated streams | Extract cookies for captured stream domains only |
 | `<all_urls>` | Support any streaming platform | Process only stream-related requests |
 
 ## Known Limitations
@@ -329,10 +337,9 @@ npm run setup
 If upgrading from DOM scraping version:
 
 **Key Changes:**
-- No more `content_scripts` injection
-- No more DOM scraping functions
-- No more `chrome.scripting` API usage
-- Keyboard shortcut repurposed for connection test
+- Passive network sniffing captures manifests during playback
+- Manual queue actions can still use `content.js` and `chrome.scripting` as a fallback for page scanning
+- Keyboard shortcut now queues the active tab instead of only testing connectivity
 
 **Backward Compatibility:**
 - Old blob/URL handlers still work in relay server
