@@ -7,6 +7,13 @@ import { createWriteStream, unlink, existsSync, mkdirSync, writeFileSync, readdi
 import { get } from 'https';
 import { execSync, spawn } from 'child_process';
 import { v4 as uuidv4 } from 'uuid';
+import {
+  sidecarPathFor,
+  recoverTranscriptionAfterCrash,
+  hydrateTranscriptionResult,
+  parseResultJsonFromStdout,
+  appendTranscriptionLog,
+} from './transcription_recovery.js';
 
 const DEBUG = process.env.LOCALSTREAM_DEBUG === '1';
 function dbg(msg) { if (DEBUG) console.log(`[DBG] ${msg}`); }
@@ -329,204 +336,9 @@ function getQuotedPythonCmd() {
   return cmd.includes(' ') ? `"${cmd}"` : cmd;
 }
 
-// Create Python transcription script if it doesn't exist
+// transcribe.py is maintained in-repo (v3+); do not embed an outdated template here.
 if (!existsSync(PYTHON_SCRIPT)) {
-  const pythonScript = `#!/usr/bin/env python3
-import sys
-import os
-import warnings
-import json
-import time
-from datetime import datetime
-from faster_whisper import WhisperModel
-
-# Suppress warnings for cleaner output
-warnings.filterwarnings("ignore", category=UserWarning)
-
-def transcribe_audio(audio_file, model_size="medium", use_gpu=True):
-    """Transcribe audio file using faster-whisper"""
-    try:
-        # Determine device and compute type
-        device = "cuda" if use_gpu else "cpu"
-        # Use float32 for CPU to get better quality (int8 quantizes and reduces accuracy)
-        # For GPU, use float16 for speed/quality balance
-        compute_type = "float16" if use_gpu else "float32"
-        
-        print(f"STATUS:Initializing {device.upper()} processing...", flush=True)
-        
-        # Check file type and provide info
-        file_ext = os.path.splitext(audio_file)[1].lower()
-        if file_ext in ['.mp4', '.webm', '.mkv', '.avi']:
-            print(f"STATUS:Processing video file ({file_ext}) - extracting audio track...", flush=True)
-        else:
-            print(f"STATUS:Processing audio file ({file_ext})...", flush=True)
-        
-        # Load model with timing
-        print(f"STATUS:Loading Whisper model ({model_size})...", flush=True)
-        print(f"STATUS:Checking cache (downloading if needed)...", flush=True)
-        
-        start_time = time.time()
-        model = WhisperModel(model_size, device=device, compute_type=compute_type)
-        load_time = time.time() - start_time
-        
-        # Determine if it was cached based on load time
-        # Cached models load very quickly (< 2s for GPU, < 3s for CPU)
-        if use_gpu:
-            is_cached = load_time < 2.0
-        else:
-            is_cached = load_time < 3.0
-        
-        if is_cached:
-            print(f"STATUS:Model loaded from cache ({load_time:.1f}s)", flush=True)
-        else:
-            print(f"STATUS:Model downloaded and loaded ({load_time:.1f}s)", flush=True)
-        
-        print(f"STATUS:Starting transcription...", flush=True)
-        # Transcribe (faster-whisper automatically handles video files by extracting audio)
-        segments, info = model.transcribe(audio_file, beam_size=5)
-        
-        print(f"STATUS:Processing segments...", flush=True)
-        # Collect segments with timestamps
-        transcript_text = ""
-        segment_count = 0
-        for segment in segments:
-            start_time = segment.start
-            end_time = segment.end
-            # Format timestamps as [MM:SS.mmm]
-            start_formatted = f"[{int(start_time//60):02d}:{start_time%60:06.3f}]"
-            end_formatted = f"[{int(end_time//60):02d}:{end_time%60:06.3f}]"
-            transcript_text += f"{start_formatted} {segment.text.strip()}\\n"
-            segment_count += 1
-            if segment_count % 10 == 0:  # Progress update every 10 segments
-                print(f"STATUS:Processed {segment_count} segments...", flush=True)
-        
-        print(f"STATUS:Transcription complete!", flush=True)
-        
-        return {
-            "success": True,
-            "transcript": transcript_text.strip(),
-            "language": info.language,
-            "language_probability": info.language_probability,
-            "device": device,
-            "compute_type": compute_type,
-            "model_size": model_size,
-            "segment_count": segment_count
-        }
-        
-    except Exception as e:
-        error_msg = str(e)
-        return {
-            "success": False,
-            "error": error_msg,
-            "device": device,
-            "compute_type": compute_type,
-            "model_size": model_size
-        }
-
-def check_gpu_availability():
-    """Check if GPU libraries are available"""
-    # Debug: print what we're checking
-    print("DEBUG:Checking GPU availability...", flush=True)
-    
-    # First try torch (most reliable)
-    try:
-        import torch
-        print(f"DEBUG:torch imported, cuda available: {torch.cuda.is_available()}", flush=True)
-        if torch.cuda.is_available():
-            print("DEBUG:GPU available via torch.cuda", flush=True)
-            return True
-    except ImportError as e:
-        print(f"DEBUG:torch not available: {e}", flush=True)
-        pass
-    
-    # Then try CUDA libraries
-    try:
-        import nvidia.cublas
-        import nvidia.cudnn
-        print("DEBUG:CUDA libraries imported successfully", flush=True)
-        # If we can import both, assume GPU is available
-        # The actual transcription will fallback to CPU if GPU fails
-        return True
-    except ImportError as e:
-        print(f"DEBUG:CUDA libraries not available: {e}", flush=True)
-        return False
-
-def save_transcription(transcript, audio_file, device, compute_type, language, confidence, model_size):
-    """Save transcription to transcriptions folder"""
-    try:
-        # Get base filename without extension
-        base_name = os.path.splitext(os.path.basename(audio_file))[0]
-        
-        # Create transcriptions directory if it doesn't exist
-        transcriptions_dir = os.path.join(os.path.dirname(audio_file), "..", "transcriptions")
-        os.makedirs(transcriptions_dir, exist_ok=True)
-        
-        # Create output file path with timestamp suffix to avoid overwriting
-        timestamp_suffix = datetime.now().strftime('%Y%m%d_%H%M%S')
-        output_file = os.path.join(transcriptions_dir, f"{base_name}_{timestamp_suffix}.txt")
-        
-        # Create header with metadata
-        header = f"""Transcription Results
-Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
-Source: {os.path.basename(audio_file)}
-Device: {device.upper()}
-Compute Type: {compute_type}
-Model Size: {model_size}
-Language: {language} ({confidence:.1%} confidence)
-
---- TRANSCRIPTION ---
-"""
-        
-        # Write to file
-        with open(output_file, 'w', encoding='utf-8') as f:
-            f.write(header)
-            f.write(transcript)
-        
-        return output_file
-    except Exception as e:
-        return None
-
-if __name__ == "__main__":
-    if len(sys.argv) != 2:
-        print(json.dumps({"success": False, "error": "Usage: python transcribe.py <audio_file>"}))
-        sys.exit(1)
-    
-    audio_file = sys.argv[1]
-    if not os.path.exists(audio_file):
-        print(json.dumps({"success": False, "error": f"Audio file not found: {audio_file}"}))
-        sys.exit(1)
-    
-    # Check GPU availability first
-    gpu_available = check_gpu_availability()
-    
-    # Try GPU first if available, otherwise use CPU
-    # Use "medium" model for GPU, "base" model for CPU (better performance on CPU)
-    if gpu_available:
-        result = transcribe_audio(audio_file, model_size="medium", use_gpu=True)
-        if not result["success"] and ("CUDA" in result["error"] or "cudnn" in result["error"].lower() or "cublas" in result["error"].lower()):
-            # Fallback to CPU if GPU fails
-            result = transcribe_audio(audio_file, model_size="base", use_gpu=False)
-    else:
-        # Use CPU directly with base model
-        result = transcribe_audio(audio_file, model_size="base", use_gpu=False)
-    
-    # Save transcription if successful
-    if result["success"]:
-        output_file = save_transcription(
-            result["transcript"], 
-            audio_file, 
-            result["device"], 
-            result["compute_type"],
-            result["language"],
-            result["language_probability"],
-            result["model_size"]
-        )
-        if output_file:
-            result["output_file"] = output_file
-    
-    print(json.dumps(result))
-`;
-  writeFileSync(PYTHON_SCRIPT, pythonScript);
+  console.error('❌ src/transcribe.py is missing. Run start.js setup or restore the project.');
 }
 
 // --- Cookie Helper Functions for yt-dlp ---
@@ -566,7 +378,7 @@ function transcribe(file, forceCPU = false) {
         let result;
         try {
             // Set environment variables for Python subprocess
-            const pythonEnv = { ...process.env };
+            const pythonEnv = { ...process.env, MP3GRABBER_ROOT: ROOT_DIR };
             if (forceCPU) {
                 pythonEnv.FORCE_CPU = '1';
             }
@@ -605,80 +417,34 @@ function transcribe(file, forceCPU = false) {
             const isShutdownCrash = status === 3221226505;    // 0xC0000409
             const hasResultSuccess = stdout.includes('RESULT:SUCCESS');
             const hasTranscriptionComplete = stdout.includes('STATUS:Transcription complete!');
+            const sawSegmentProgress =
+                hasTranscriptionComplete || /STATUS:Processed \d+ segments/.test(stdout);
             const isCudaError = stderr.includes('cudnn') || 
                                stderr.includes('cublas') || 
                                stderr.includes('cudnn_ops64_9.dll') ||
                                stderr.includes('cublas64_12.dll') ||
                                stderr.includes('Invalid handle') ||
-                               (isShutdownCrash && !hasTranscriptionComplete);
+                               (isShutdownCrash && !sawSegmentProgress);
 
-            // --- Recovery layer 1: extract RESULT_JSON from stdout ---
-            // Python emits RESULT_JSON:{...} to stdout right after the last
-            // segment.  stdout is captured by execSync even when the process
-            // crashes, making this the most reliable recovery path.
-            const rjPrefix = 'RESULT_JSON:';
-            const rjIdx = stdout.indexOf(rjPrefix);
-            if (rjIdx !== -1) {
-                const jsonStart = rjIdx + rjPrefix.length;
-                let lineEnd = stdout.indexOf('\n', jsonStart);
-                if (lineEnd === -1) lineEnd = stdout.length;
-                try {
-                    const jsonResult = JSON.parse(stdout.substring(jsonStart, lineEnd).replace(/\r$/, ''));
-                    if (jsonResult.success && jsonResult.transcript) {
-                        const resultPath = path.join(path.dirname(file), path.basename(file, path.extname(file)) + '.transcribe_result.json');
-                        if (existsSync(resultPath)) unlink(resultPath, () => {});
-                        try {
-                            const baseName = path.basename(file, path.extname(file));
-                            const transcriptFile = path.join(TRANSCRIPTIONS_DIR, `${baseName}.txt`);
-                            if (!existsSync(transcriptFile)) {
-                                const hdr = `Transcription Results\nRecovered after process crash\nSource: ${path.basename(file)}\nDevice: ${(jsonResult.device || 'unknown').toUpperCase()}\nModel: ${jsonResult.model_size || 'unknown'}\nLanguage: ${jsonResult.language || 'unknown'}\n\n--- TRANSCRIPTION ---\n`;
-                                writeFileSync(transcriptFile, hdr + jsonResult.transcript);
-                                console.log(`📄 Transcript saved (stdout recovery): ${transcriptFile}`);
-                            }
-                        } catch (saveErr) {
-                            console.error(`⚠️  Failed to save transcript file: ${saveErr.message}`);
-                        }
-                        const device = jsonResult.device || 'unknown';
-                        const deviceIcon = (device + '').toUpperCase() === 'CUDA' ? '🎮' : '💻';
-                        console.log(`✅ Transcription complete! (recovered from stdout) ${deviceIcon} Used: ${(device + '').toUpperCase()}`);
-                        return jsonResult.transcript;
+            if (hasResultSuccess || isShutdownCrash || isAccessViolation || sawSegmentProgress) {
+                const jsonResult = recoverTranscriptionAfterCrash(file, stdout, TRANSCRIPTIONS_DIR);
+                if (jsonResult?.success && jsonResult.transcript) {
+                    const resultPath = sidecarPathFor(file);
+                    if (existsSync(resultPath)) unlink(resultPath, () => {});
+                    appendTranscriptionLog(
+                        TRANSCRIPTIONS_DIR,
+                        `relay recovered status=${status} file=${path.basename(file)} output=${jsonResult.output_file || 'n/a'}`
+                    );
+                    const device = jsonResult.device || 'unknown';
+                    const deviceIcon = (device + '').toUpperCase() === 'CUDA' ? '🎮' : '💻';
+                    console.log(`✅ Transcription complete! (recovered) ${deviceIcon} Used: ${(device + '').toUpperCase()}`);
+                    if (jsonResult.output_file) {
+                        console.log(`📄 Transcript: ${jsonResult.output_file}`);
                     }
-                } catch (parseErr) {
-                    console.error(`⚠️  RESULT_JSON in stdout but parse failed: ${parseErr.message}`);
+                    return jsonResult.transcript;
                 }
-            }
-
-            // --- Recovery layer 2: sidecar file on disk ---
-            const resultPath = path.join(path.dirname(file), path.basename(file, path.extname(file)) + '.transcribe_result.json');
-            if (hasResultSuccess || (isShutdownCrash && hasTranscriptionComplete)) {
-                if (existsSync(resultPath)) {
-                    try {
-                        const jsonStr = readFileSync(resultPath, 'utf8');
-                        const jsonResult = JSON.parse(jsonStr);
-                        if (jsonResult.success && jsonResult.transcript) {
-                            unlink(resultPath, () => {});
-                            try {
-                                const baseName = path.basename(file, path.extname(file));
-                                const transcriptFile = path.join(TRANSCRIPTIONS_DIR, `${baseName}.txt`);
-                                if (!existsSync(transcriptFile)) {
-                                    const hdr = `Transcription Results\nRecovered after process crash\nSource: ${path.basename(file)}\nDevice: ${(jsonResult.device || 'unknown').toUpperCase()}\nModel: ${jsonResult.model_size || 'unknown'}\nLanguage: ${jsonResult.language || 'unknown'}\n\n--- TRANSCRIPTION ---\n`;
-                                    writeFileSync(transcriptFile, hdr + jsonResult.transcript);
-                                    console.log(`📄 Transcript saved (sidecar recovery): ${transcriptFile}`);
-                                }
-                            } catch (saveErr) {
-                                console.error(`⚠️  Failed to save transcript file: ${saveErr.message}`);
-                            }
-                            const device = jsonResult.device || 'unknown';
-                            const deviceIcon = (device + '').toUpperCase() === 'CUDA' ? '🎮' : '💻';
-                            console.log(`✅ Transcription complete! (recovered from sidecar) ${deviceIcon} Used: ${(device + '').toUpperCase()}`);
-                            return jsonResult.transcript;
-                        }
-                        console.error(`⚠️  Sidecar found but result invalid (success=${jsonResult.success})`);
-                    } catch (sidecarErr) {
-                        console.error(`⚠️  Sidecar recovery failed: ${sidecarErr.message}`);
-                    }
-                } else {
-                    console.error(`⚠️  Process crashed after transcription but sidecar not found: ${resultPath}`);
+                if ((isShutdownCrash || isAccessViolation) && sawSegmentProgress) {
+                    console.error(`⚠️  Process crashed after transcription; no recoverable transcript on disk (${path.basename(file)})`);
                 }
             }
 
@@ -703,45 +469,37 @@ function transcribe(file, forceCPU = false) {
             throw execError;
         }
         
-        // Parse the output to extract JSON result and device info
-        const lines = result.trim().split('\n');
-        let jsonResult = null;
-        let deviceUsed = 'unknown';
-        
-        // Look for device status messages
-        for (const line of lines) {
-            if (line.includes('STATUS:Initializing CUDA processing')) {
-                deviceUsed = 'GPU';
-            } else if (line.includes('STATUS:Initializing CPU processing')) {
-                deviceUsed = 'CPU';
-            } else if (line.includes('STATUS:GPU confirmed')) {
-                deviceUsed = 'GPU';
-            } else if (line.includes('WARNING:GPU requested but CUDA not available')) {
-                deviceUsed = 'CPU (GPU fallback)';
-            }
-        }
-        
-        // Find the JSON line (should be the last line that starts with {)
-        for (let i = lines.length - 1; i >= 0; i--) {
-            const line = lines[i].trim();
-            if (line.startsWith('{') && line.endsWith('}')) {
-                try {
-                    jsonResult = JSON.parse(line);
-                    break;
-                } catch (parseError) {
-                    continue;
+        let jsonResult = hydrateTranscriptionResult(parseResultJsonFromStdout(result));
+        if (!jsonResult) {
+            const lines = result.trim().split('\n');
+            for (let i = lines.length - 1; i >= 0; i--) {
+                const line = lines[i].trim();
+                if (line.startsWith('{') && line.endsWith('}')) {
+                    try {
+                        jsonResult = hydrateTranscriptionResult(JSON.parse(line));
+                        if (jsonResult) break;
+                    } catch {
+                        continue;
+                    }
                 }
             }
         }
+        if (!jsonResult) {
+            jsonResult = recoverTranscriptionAfterCrash(file, result, TRANSCRIPTIONS_DIR);
+        }
         
         if (!jsonResult) {
-            throw new Error(`No valid JSON found in output. Raw output: ${result}`);
+            throw new Error(`No valid transcription result found in output.`);
         }
         
         if (jsonResult.success) {
-            const sidecarPath = path.join(path.dirname(file), path.basename(file, path.extname(file)) + '.transcribe_result.json');
+            const sidecarPath = sidecarPathFor(file);
             if (existsSync(sidecarPath)) unlink(sidecarPath, () => {});
-            const device = jsonResult.device || deviceUsed;
+            appendTranscriptionLog(
+                TRANSCRIPTIONS_DIR,
+                `relay success file=${path.basename(file)} output=${jsonResult.output_file || 'n/a'}`
+            );
+            const device = jsonResult.device || 'unknown';
             const deviceIcon = device.toUpperCase() === 'CUDA' ? '🎮' : '💻';
             console.log(`✅ Transcription complete! ${deviceIcon} Used: ${device.toUpperCase()}`);
             return jsonResult.transcript;
