@@ -469,7 +469,7 @@ except Exception as e:
                 
                 if (retestGpuAvailable === 'true' && retestGpuTested === 'true') {
                   log('   ✅ GPU now working after installing libraries!', 'green');
-                  return { available: true, type: 'GPU (CUDA) - Tested', color: 'green' };
+                  return { available: true, type: 'GPU (CUDA) - Tested', color: 'green', modelSource: null, modelPath: null };
                 } else {
                   log('   ⚠️  Libraries installed but GPU still not working', 'yellow');
                   log('   💡 Try restarting the setup script or check NVIDIA drivers', 'yellow');
@@ -1150,43 +1150,55 @@ async function ensureTranscribeScript() {
   }
 }
 
+// NOTE: verifyGPUInstallation() is intentionally NOT called — getGPUStatus()
+// performs a more thorough test and is run instead.  This function is kept for
+// reference but should not be invoked without review.
+//
+// Historical bug (fixed): the original version passed testScript inline via
+// python -c "...", which broke on Windows because the script contains double
+// quotes.  It now writes to a temp file, matching the pattern used by
+// getGPUStatus().
 async function verifyGPUInstallation() {
   log('🔍 Verifying GPU installation...', 'cyan');
   
-  try {
-    // Test GPU availability with Python
-    const testScript = `
-import sys
+  // Write the test script to a temp file so embedded double-quotes don't break
+  // shell escaping on Windows (the original -c "..." approach had shell injection
+  // issues when the inline script contained Python double-quoted strings).
+  const testScript = `import sys
 import os
 try:
-    # First check if CUDA libraries can be imported
     try:
         import nvidia.cublas
         import nvidia.cudnn
-        print("CUDA_LIBS:available")
+        print('CUDA_LIBS:available')
     except ImportError as lib_error:
-        print("CUDA_LIBS:missing")
-        print("CUDA_LIB_ERROR:" + str(lib_error))
-    
-    # Try to create a model with GPU
+        print('CUDA_LIBS:missing')
+        print('CUDA_LIB_ERROR:' + str(lib_error))
     from faster_whisper import WhisperModel
     import warnings
-    warnings.filterwarnings("ignore")
-    
-    model = WhisperModel("base", device="cuda", compute_type="float16")
-    print("GPU_AVAILABLE:true")
+    warnings.filterwarnings('ignore')
+    model = WhisperModel('base', device='cuda', compute_type='float16')
+    print('GPU_AVAILABLE:true')
 except Exception as e:
     error_msg = str(e)
-    if "CUDA" in error_msg or "cudnn" in error_msg.lower() or "cublas" in error_msg.lower() or "dll" in error_msg.lower():
-        print("GPU_AVAILABLE:false")
-        print("GPU_ERROR:" + error_msg)
+    if 'CUDA' in error_msg or 'cudnn' in error_msg.lower() or 'cublas' in error_msg.lower() or 'dll' in error_msg.lower():
+        print('GPU_AVAILABLE:false')
+        print('GPU_ERROR:' + error_msg)
     else:
-        print("GPU_AVAILABLE:unknown")
-        print("GPU_ERROR:" + error_msg)
+        print('GPU_AVAILABLE:unknown')
+        print('GPU_ERROR:' + error_msg)
 `;
-    
+  const tempScript = path.join(__dirname, 'temp_verify_gpu.py');
+  try {
+    writeFileSync(tempScript, testScript);
+  } catch (writeErr) {
+    log(`⚠️  Could not write GPU verify script: ${writeErr.message}`, 'yellow');
+    return;
+  }
+
+  try {
     const pythonCmd = getPythonCommand();
-    const result = execSync(`${pythonCmd} -c "${testScript}"`, { 
+    const result = execSync(`${pythonCmd} "${tempScript}"`, { 
       encoding: 'utf8',
       cwd: __dirname,
       timeout: 30000 // 30 second timeout
@@ -1220,6 +1232,8 @@ except Exception as e:
   } catch (error) {
     log('⚠️  Could not verify GPU installation - will attempt GPU with CPU fallback', 'yellow');
     log('   This is normal if you don\'t have NVIDIA GPU or CUDA installed', 'yellow');
+  } finally {
+    try { unlinkSync(tempScript); } catch { /* ignore */ }
   }
 }
 
@@ -1437,7 +1451,7 @@ async function transcribeFile() {
       // OSC 8 hyperlink — Ctrl+click to open in Windows Terminal
       process.stdout.write(`   \x1b]8;;${fileUri}\x1b\\${absPath}\x1b]8;;\x1b\\\n`);
 
-      debug(`Language: ${transcriptionResult.language} (${(transcriptionResult.language_probability * 100).toFixed(1)}% confidence)`);
+      debug(`Language: ${transcriptionResult.language} (${((transcriptionResult.language_probability ?? 0) * 100).toFixed(1)}% confidence)`);
       if (transcriptionResult.device) {
         debug(`Device: ${transcriptionResult.device.toUpperCase()}`, transcriptionResult.device === 'cuda' ? 'green' : 'yellow');
       }

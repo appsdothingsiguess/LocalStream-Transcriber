@@ -154,8 +154,29 @@ Status: {status}
             placeholder = "(in progress — segments stream below as they complete)"
             if body and body != placeholder:
                 body_lines.append(body)
-        except Exception:
-            body_lines = []
+        except Exception as read_exc:
+            # If we can't re-read the file we already wrote, do NOT overwrite it
+            # with an empty header — that would destroy all incrementally-written
+            # segments.  Log a warning and return a partial success so the caller
+            # can still find the file on disk.
+            print(f"WARNING:finalize() could not re-read transcript ({read_exc}); "
+                  f"keeping existing file as-is", flush=True)
+            log_transcription_event(
+                f"finalize-read-error {self.base_name}: {read_exc}; file preserved"
+            )
+            return {
+                "success": True,
+                "output_file": self.output_file,
+                "language": language,
+                "language_probability": language_probability,
+                "device": self.device,
+                "compute_type": self.compute_type,
+                "model_size": self.model_size,
+                "resolved_model_id": resolved_model_id,
+                "resolved_model_path": resolved_model_path,
+                "segment_count": self.segment_count,
+                "transcript_saved": True,
+            }
 
         with open(self.output_file, "w", encoding="utf-8") as f:
             f.write(

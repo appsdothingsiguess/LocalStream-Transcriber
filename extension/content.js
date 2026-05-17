@@ -27,9 +27,17 @@ async function convertBlobToData(blobUrl) {
       type: blob.type
     });
     
-    // Convert blob to base64
+    // Convert blob to base64 in chunks to avoid call-stack overflow on large files.
+    // Spreading a multi-MB Uint8Array as function arguments exceeds the JS engine's
+    // maximum argument count and throws "Maximum call stack size exceeded".
     const arrayBuffer = await blob.arrayBuffer();
-    const base64 = btoa(String.fromCharCode(...new Uint8Array(arrayBuffer)));
+    const bytes = new Uint8Array(arrayBuffer);
+    let binary = '';
+    const CHUNK = 8192;
+    for (let i = 0; i < bytes.length; i += CHUNK) {
+      binary += String.fromCharCode(...bytes.subarray(i, i + CHUNK));
+    }
+    const base64 = btoa(binary);
     
     return {
       data: base64,
@@ -575,10 +583,12 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   }
 });
 
-// Global function registration for testing
-window.mp3GrabberTest = function() {
+// Global function registration for testing.
+// findYouTubeAudioElementsSync is async, so this must be async too; callers
+// should await the result: const data = await window.mp3GrabberTest()
+window.mp3GrabberTest = async function() {
   console.log('MP3 Grabber: Test function called');
-  const audioData = findYouTubeAudioElementsSync();
+  const audioData = await findYouTubeAudioElementsSync();
   const videoInfo = getCurrentVideoInfo();
   return {
     success: true,

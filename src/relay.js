@@ -4,7 +4,8 @@ import { WebSocketServer, WebSocket } from 'ws';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { createWriteStream, unlink, existsSync, mkdirSync, writeFileSync, readdirSync, statSync, readFileSync } from 'fs';
-import { get } from 'https';
+import { get as httpsGet } from 'https';
+import { get as httpGet } from 'http';
 import { execSync, spawn } from 'child_process';
 import { v4 as uuidv4 } from 'uuid';
 import {
@@ -364,152 +365,169 @@ function writeNetscapeCookieFile(cookies, filepath) {
 }
 
 // --- Transcription Function ---
-function transcribe(file, forceCPU = false) {
+async function transcribe(file, forceCPU = false) {
+  dbg(`Transcribing audio file...${forceCPU ? ' (CPU mode)' : ''}`);
+
+  const stats = statSync(file);
+  if (stats.size < 1000) {
+    throw new Error(`File too small to be valid audio/video (${stats.size} bytes). This may be a subtitle or caption file.`);
+  }
+
+  const pythonCmd = detectPythonExecutable();
+  if (!pythonCmd) {
+    throw new Error('Python executable not found. Please install Python and ensure it is in your PATH.');
+  }
+  // spawn requires a raw path — strip any surrounding quotes added by getQuotedPythonCmd
+  const pythonExe = pythonCmd.replace(/^"|"$/g, '');
+
+  const spawnEnv = { ...process.env, MP3GRABBER_ROOT: ROOT_DIR };
+  if (forceCPU) spawnEnv.FORCE_CPU = '1';
+  // Whisper model — use whatever the user selected in settings (passed from
+  // start.js when launching the relay, or read directly from config here as
+  // a fallback when relay is started standalone).
+  if (!spawnEnv.WHISPER_MODEL) {
     try {
-        dbg(`Transcribing audio file...${forceCPU ? ' (CPU mode)' : ''}`);
-        
-        // Validate file size before attempting transcription
-        const stats = statSync(file);
-        if (stats.size < 1000) {
-            throw new Error(`File too small to be valid audio/video (${stats.size} bytes). This may be a subtitle or caption file.`);
-        }
-        
-        // Check for CUDA errors in stderr before parsing
-        let result;
-        try {
-            // Set environment variables for Python subprocess
-            const pythonEnv = { ...process.env, MP3GRABBER_ROOT: ROOT_DIR };
-            if (forceCPU) {
-                pythonEnv.FORCE_CPU = '1';
-            }
-            // Whisper model — use whatever the user selected in settings (passed from
-            // start.js when launching the relay, or read directly from config here as
-            // a fallback when relay is started standalone).
-            if (!pythonEnv.WHISPER_MODEL) {
-                try {
-                    const cfg = JSON.parse(readFileSync(CONFIG_FILE, 'utf8'));
-                    if (cfg.WHISPER_MODEL) pythonEnv.WHISPER_MODEL = cfg.WHISPER_MODEL;
-                } catch (_) { /* config not readable — Python will auto-select */ }
-            }
-            // Windows: reduce ONNX/OpenMP crashes during model load (faster-whisper#1169, #967)
-            if (process.platform === 'win32') {
-                pythonEnv.ORT_DISABLE_CPU_AFFINITY = '1';
-                pythonEnv.OMP_NUM_THREADS = pythonEnv.OMP_NUM_THREADS || '1';
-            }
-            
-            const pythonCmd = getQuotedPythonCmd();
-            if (!pythonCmd) {
-                throw new Error('Python executable not found. Please install Python and ensure it is in your PATH.');
-            }
-            
-            result = execSync(`${pythonCmd} "${PYTHON_SCRIPT}" "${file}"`, {
-                encoding: "utf8",
-                cwd: __dirname,
-                stdio: 'pipe',
-                env: pythonEnv,
-                maxBuffer: 50 * 1024 * 1024
-            });
-        } catch (execError) {
-            const stdout = (execError.stdout || '').toString();
-            const stderr = (execError.stderr || '').toString();
-            const status = execError.status != null ? execError.status : execError.code;
-            const isAccessViolation = status === 3221225477;  // 0xC0000005
-            const isShutdownCrash = status === 3221226505;    // 0xC0000409
-            const hasResultSuccess = stdout.includes('RESULT:SUCCESS');
-            const hasTranscriptionComplete = stdout.includes('STATUS:Transcription complete!');
-            const sawSegmentProgress =
-                hasTranscriptionComplete || /STATUS:Processed \d+ segments/.test(stdout);
-            const isCudaError = stderr.includes('cudnn') || 
-                               stderr.includes('cublas') || 
-                               stderr.includes('cudnn_ops64_9.dll') ||
-                               stderr.includes('cublas64_12.dll') ||
-                               stderr.includes('Invalid handle') ||
-                               (isShutdownCrash && !sawSegmentProgress);
+      const cfg = JSON.parse(readFileSync(CONFIG_FILE, 'utf8'));
+      if (cfg.WHISPER_MODEL) spawnEnv.WHISPER_MODEL = cfg.WHISPER_MODEL;
+    } catch (_) {}
+  }
+  // Windows: reduce ONNX/OpenMP crashes during model load (faster-whisper#1169, #967)
+  if (process.platform === 'win32') {
+    spawnEnv.ORT_DISABLE_CPU_AFFINITY = '1';
+    spawnEnv.OMP_NUM_THREADS = spawnEnv.OMP_NUM_THREADS || '1';
+  }
 
-            if (hasResultSuccess || isShutdownCrash || isAccessViolation || sawSegmentProgress) {
-                const jsonResult = recoverTranscriptionAfterCrash(file, stdout, TRANSCRIPTIONS_DIR);
-                if (jsonResult?.success && jsonResult.transcript) {
-                    const resultPath = sidecarPathFor(file);
-                    if (existsSync(resultPath)) unlink(resultPath, () => {});
-                    appendTranscriptionLog(
-                        TRANSCRIPTIONS_DIR,
-                        `relay recovered status=${status} file=${path.basename(file)} output=${jsonResult.output_file || 'n/a'}`
-                    );
-                    const device = jsonResult.device || 'unknown';
-                    const deviceIcon = (device + '').toUpperCase() === 'CUDA' ? '🎮' : '💻';
-                    console.log(`✅ Transcription complete! (recovered) ${deviceIcon} Used: ${(device + '').toUpperCase()}`);
-                    if (jsonResult.output_file) {
-                        console.log(`📄 Transcript: ${jsonResult.output_file}`);
-                    }
-                    return jsonResult.transcript;
-                }
-                if ((isShutdownCrash || isAccessViolation) && sawSegmentProgress) {
-                    console.error(`⚠️  Process crashed after transcription; no recoverable transcript on disk (${path.basename(file)})`);
-                }
-            }
+  return new Promise((resolve, reject) => {
+    let stdoutBuffer = '';
+    let stderrBuffer = '';
+    let parsedResult = null;
+    let sawTranscriptionComplete = false;
 
-            if (isAccessViolation && !forceCPU) {
-                console.error(`⚠️  Transcription process crashed (access violation). Often caused by using a different Python than setup.`);
-                console.log(`💡 Retrying with CPU mode...`);
-                return transcribe(file, true);
-            }
-            if (isCudaError && !forceCPU) {
-                console.error(`⚠️  CUDA error detected: ${(stderr || stdout).substring(0, 200)}`);
-                console.log(`💡 Retrying with CPU mode...`);
-                return transcribe(file, true);
-            }
-            if (isAccessViolation && forceCPU) {
-                console.error(`❌ Transcription crashed during model load (Windows access violation).`);
-                console.error(`   transcribe.py sets ORT_DISABLE_CPU_AFFINITY and OMP_NUM_THREADS to reduce this. If it still fails:`);
-                console.error(`   1) Clear the model cache: %USERPROFILE%\\.cache\\huggingface\\hub (then re-run; model will re-download)`);
-                console.error(`   2) Run transcribe.py directly to test: python transcribe.py "<path-to-audio>"`);
-                console.error(`   3) Try: pip install faster-whisper==1.0.3 (older version sometimes avoids the crash)`);
-            }
-            console.error(`❌ [TRANSCRIBE] Python exited with status ${status}${stderr ? ' | stderr: ' + stderr.substring(0, 300) : ''}`);
-            throw execError;
-        }
-        
-        let jsonResult = hydrateTranscriptionResult(parseResultJsonFromStdout(result));
-        if (!jsonResult) {
-            const lines = result.trim().split('\n');
-            for (let i = lines.length - 1; i >= 0; i--) {
-                const line = lines[i].trim();
-                if (line.startsWith('{') && line.endsWith('}')) {
-                    try {
-                        jsonResult = hydrateTranscriptionResult(JSON.parse(line));
-                        if (jsonResult) break;
-                    } catch {
-                        continue;
-                    }
-                }
-            }
-        }
-        if (!jsonResult) {
-            jsonResult = recoverTranscriptionAfterCrash(file, result, TRANSCRIPTIONS_DIR);
-        }
-        
-        if (!jsonResult) {
-            throw new Error(`No valid transcription result found in output.`);
-        }
-        
-        if (jsonResult.success) {
-            const sidecarPath = sidecarPathFor(file);
-            if (existsSync(sidecarPath)) unlink(sidecarPath, () => {});
-            appendTranscriptionLog(
-                TRANSCRIPTIONS_DIR,
-                `relay success file=${path.basename(file)} output=${jsonResult.output_file || 'n/a'}`
+    const pythonProcess = spawn(pythonExe, [PYTHON_SCRIPT, file], {
+      cwd: __dirname,
+      stdio: ['pipe', 'pipe', 'pipe'],
+      env: spawnEnv,
+    });
+
+    pythonProcess.stdout.on('data', (data) => {
+      const chunk = data.toString();
+      stdoutBuffer += chunk;
+      for (const line of chunk.split('\n')) {
+        const trimmed = line.trim();
+        if (!trimmed) continue;
+        if (trimmed.startsWith('RESULT_JSON:')) {
+          try {
+            parsedResult = hydrateTranscriptionResult(
+              JSON.parse(trimmed.substring('RESULT_JSON:'.length).replace(/\r$/, ''))
             );
-            const device = jsonResult.device || 'unknown';
-            const deviceIcon = device.toUpperCase() === 'CUDA' ? '🎮' : '💻';
-            console.log(`✅ Transcription complete! ${deviceIcon} Used: ${device.toUpperCase()}`);
-            return jsonResult.transcript;
-        } else {
-            throw new Error(jsonResult.error || 'Transcription failed');
+          } catch (_) {}
+        } else if (trimmed === 'STATUS:Transcription complete!') {
+          sawTranscriptionComplete = true;
         }
-    } catch (error) {
-        console.error(`Relay: Transcription error:`, error);
-        throw new Error(`Transcription failed: ${error.message}`);
-    }
+      }
+    });
+
+    pythonProcess.stderr.on('data', (data) => {
+      stderrBuffer += data.toString();
+    });
+
+    pythonProcess.on('error', (err) => {
+      reject(new Error(`Failed to spawn Python process: ${err.message}`));
+    });
+
+    pythonProcess.on('close', (code) => {
+      // Happy path: RESULT_JSON was emitted and parsed successfully
+      if (parsedResult?.success) {
+        const sidecarPath = sidecarPathFor(file);
+        if (existsSync(sidecarPath)) unlink(sidecarPath, () => {});
+        appendTranscriptionLog(
+          TRANSCRIPTIONS_DIR,
+          `relay success file=${path.basename(file)} output=${parsedResult.output_file || 'n/a'}`
+        );
+        const device = parsedResult.device || 'unknown';
+        const deviceIcon = device.toUpperCase() === 'CUDA' ? '🎮' : '💻';
+        console.log(`✅ Transcription complete! ${deviceIcon} Used: ${device.toUpperCase()}`);
+        resolve(parsedResult.transcript);
+        return;
+      }
+
+      const sawSegmentProgress =
+        sawTranscriptionComplete ||
+        /STATUS:Processed \d+ segments/.test(stdoutBuffer);
+
+      const isAccessViolation = code === 3221225477; // 0xC0000005
+      const isShutdownCrash   = code === 3221226505; // 0xC0000409
+      const isWindowsCrash    = isAccessViolation || isShutdownCrash;
+
+      const isCudaError =
+        stderrBuffer.includes('cudnn') ||
+        stderrBuffer.includes('cublas') ||
+        stderrBuffer.includes('cudnn_ops64_9.dll') ||
+        stderrBuffer.includes('cublas64_12.dll') ||
+        stderrBuffer.includes('Invalid handle') ||
+        (isShutdownCrash && !sawSegmentProgress);
+
+      // Attempt crash recovery when we saw transcription progress or got a known crash code
+      if (isWindowsCrash || sawSegmentProgress) {
+        const recovered = recoverTranscriptionAfterCrash(file, stdoutBuffer, TRANSCRIPTIONS_DIR);
+        if (recovered?.success && recovered.transcript) {
+          const sidecarPath = sidecarPathFor(file);
+          if (existsSync(sidecarPath)) unlink(sidecarPath, () => {});
+          appendTranscriptionLog(
+            TRANSCRIPTIONS_DIR,
+            `relay recovered status=${code} file=${path.basename(file)} output=${recovered.output_file || 'n/a'}`
+          );
+          const device = recovered.device || 'unknown';
+          const deviceIcon = (device + '').toUpperCase() === 'CUDA' ? '🎮' : '💻';
+          console.log(`✅ Transcription complete! (recovered) ${deviceIcon} Used: ${(device + '').toUpperCase()}`);
+          if (recovered.output_file) console.log(`📄 Transcript: ${recovered.output_file}`);
+          resolve(recovered.transcript);
+          return;
+        }
+        if (isWindowsCrash && sawSegmentProgress) {
+          console.error(`⚠️  Process crashed after transcription; no recoverable transcript on disk (${path.basename(file)})`);
+        }
+      }
+
+      // CPU fallback for access violation or CUDA error
+      if (isAccessViolation && !forceCPU) {
+        console.error(`⚠️  Transcription process crashed (access violation). Often caused by using a different Python than setup.`);
+        console.log(`💡 Retrying with CPU mode...`);
+        transcribe(file, true).then(resolve, reject);
+        return;
+      }
+      if (isCudaError && !forceCPU) {
+        console.error(`⚠️  CUDA error detected: ${(stderrBuffer || stdoutBuffer).substring(0, 200)}`);
+        console.log(`💡 Retrying with CPU mode...`);
+        transcribe(file, true).then(resolve, reject);
+        return;
+      }
+      if (isAccessViolation && forceCPU) {
+        console.error(`❌ Transcription crashed during model load (Windows access violation).`);
+        console.error(`   transcribe.py sets ORT_DISABLE_CPU_AFFINITY and OMP_NUM_THREADS to reduce this. If it still fails:`);
+        console.error(`   1) Clear the model cache: %USERPROFILE%\\.cache\\huggingface\\hub (then re-run; model will re-download)`);
+        console.error(`   2) Run transcribe.py directly to test: python transcribe.py "<path-to-audio>"`);
+        console.error(`   3) Try: pip install faster-whisper==1.0.3 (older version sometimes avoids the crash)`);
+      }
+
+      // code === 0 but no RESULT_JSON: try full-buffer recovery (e.g. legacy JSON output)
+      if (code === 0) {
+        const recovered = recoverTranscriptionAfterCrash(file, stdoutBuffer, TRANSCRIPTIONS_DIR);
+        if (recovered?.success) {
+          const sidecarPath = sidecarPathFor(file);
+          if (existsSync(sidecarPath)) unlink(sidecarPath, () => {});
+          resolve(recovered.transcript);
+          return;
+        }
+        reject(new Error('No valid transcription result found in output.'));
+        return;
+      }
+
+      const detail = stderrBuffer.trim() ? ` | stderr: ${stderrBuffer.trim().slice(0, 300)}` : '';
+      console.error(`❌ [TRANSCRIBE] Python exited with status ${code}${detail}`);
+      reject(new Error(`Transcription failed: Python exited with status ${code}${detail}`));
+    });
+  });
 }
 
 // --- Express Server ---
@@ -641,10 +659,41 @@ server.on('upgrade', (req, sock, head) => {
 });
 
 // --- Helper Function to Download a File ---
-function downloadFile(url, dest) {
+// Handles both http:// and https://, non-200 status codes, and up to 5 redirects.
+function downloadFile(url, dest, _redirectsLeft = 5) {
   return new Promise((resolve, reject) => {
+    const get = url.startsWith('https://') ? httpsGet : httpGet;
     const file = createWriteStream(dest);
+
     get(url, response => {
+      const { statusCode, headers } = response;
+
+      // Follow redirects (301, 302, 303, 307, 308)
+      if (statusCode >= 300 && statusCode < 400 && headers.location) {
+        // Discard response body before following redirect
+        response.resume();
+        file.close(() => {
+          unlink(dest, () => {});
+          if (_redirectsLeft <= 0) {
+            reject(new Error(`Too many redirects downloading ${url}`));
+            return;
+          }
+          const redirectUrl = headers.location.startsWith('/')
+            ? new URL(headers.location, url).href
+            : headers.location;
+          downloadFile(redirectUrl, dest, _redirectsLeft - 1).then(resolve, reject);
+        });
+        return;
+      }
+
+      if (statusCode !== 200) {
+        response.resume(); // drain so socket can be reused
+        file.close(() => {});
+        unlink(dest, () => {});
+        reject(new Error(`HTTP ${statusCode} downloading ${url}`));
+        return;
+      }
+
       response.pipe(file);
       file.on('finish', () => file.close(resolve));
     }).on('error', err => {
@@ -833,7 +882,7 @@ wss.on('connection', ws => {
                   });
                 });
                 
-                ytdlpProcess.on('close', (code) => {
+                ytdlpProcess.on('close', async (code) => {
                   // Clean up cookie file
                   if (cookies && cookies.length > 0 && existsSync(cookieFilePath)) {
                     unlink(cookieFilePath, (err) => {
@@ -872,7 +921,7 @@ wss.on('connection', ws => {
                     // Proceed with transcription
                     try {
                       console.log('🎙️   Transcribing...');
-                      const transcript = transcribe(outputPath);
+                      const transcript = await transcribe(outputPath);
                       // Derive a friendly filename for the done message
                       const entryId = jobQueue.extractEntryId(url);
                       const baseName = entryId && entryId !== url ? entryId : outputFilename.replace(/\.[^.]+$/, '');
@@ -1013,7 +1062,7 @@ wss.on('connection', ws => {
             url: blobUrl,
             entryId: originalUrl ? jobQueue.extractEntryId(originalUrl) : `blob:${jobId}`,
             handler: async () => {
-              return new Promise((resolve, reject) => {
+              return new Promise(async (resolve, reject) => {
                 try {
                   // Determine file extension from MIME type
                   let fileExtension = '.mp3'; // default
@@ -1036,7 +1085,7 @@ wss.on('connection', ws => {
 
                   // Transcribe
                   console.log('🎙️   Transcribing...');
-                  const transcript = transcribe(localFilePath);
+                  const transcript = await transcribe(localFilePath);
                   const blobTranscriptPath = path.join(TRANSCRIPTIONS_DIR, `${jobId}.txt`);
                   const blobUri = `file:///${blobTranscriptPath.replace(/\\/g, '/')}`;
                   console.log(`✅   Done`);
@@ -1127,7 +1176,7 @@ wss.on('connection', ws => {
                   
                   // Transcribe
                   console.log('🎙️   Transcribing...');
-                  const transcript = transcribe(localFilePath);
+                  const transcript = await transcribe(localFilePath);
                   const urlTranscriptPath = path.join(TRANSCRIPTIONS_DIR, `${jobId}.txt`);
                   const urlUri = `file:///${urlTranscriptPath.replace(/\\/g, '/')}`;
                   console.log(`✅   Done`);
