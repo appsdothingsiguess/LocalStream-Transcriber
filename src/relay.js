@@ -15,6 +15,7 @@ import {
   parseResultJsonFromStdout,
   appendTranscriptionLog,
 } from './transcription_recovery.js';
+import { generateNote, saveNoteToVault } from './notes.js';
 
 const DEBUG = process.env.LOCALSTREAM_DEBUG === '1';
 function dbg(msg) { if (DEBUG) console.log(`[DBG] ${msg}`); }
@@ -228,6 +229,57 @@ function loadPythonPathFromConfig() {
   }
   
   return null;
+}
+
+/**
+ * Load Ollama/Obsidian notes config from config.json. Notes generation is
+ * entirely optional — any missing/invalid config just disables the feature
+ * rather than failing the transcription job.
+ */
+function loadNotesConfig() {
+  try {
+    if (!existsSync(CONFIG_FILE)) return null;
+    const config = JSON.parse(readFileSync(CONFIG_FILE, 'utf8'));
+    if (!config.OLLAMA_MODEL || !config.OBSIDIAN_NOTES_PATH || config.OLLAMA_MODEL.startsWith('REPLACE_ME')) {
+      return null;
+    }
+    return {
+      ollamaHosts: Array.isArray(config.OLLAMA_HOSTS) && config.OLLAMA_HOSTS.length
+        ? config.OLLAMA_HOSTS
+        : ['http://localhost:11434'],
+      ollamaModel: config.OLLAMA_MODEL,
+      vaultPath: config.OBSIDIAN_NOTES_PATH,
+    };
+  } catch (error) {
+    dbg(`Notes config not usable: ${error.message}`);
+    return null;
+  }
+}
+
+/**
+ * Fire-and-forget: turn a finished transcript into Obsidian notes. Never
+ * throws into the caller — failures (Ollama down, bad config) are logged and
+ * broadcast as notes_failed, but the transcription job itself already
+ * succeeded and must not be affected.
+ */
+async function generateAndBroadcastNotes(jobId, transcript, pageTitle, pageUrl) {
+  const notesConfig = loadNotesConfig();
+  if (!notesConfig) return; // feature not configured — silently skip
+
+  try {
+    const markdown = await generateNote({
+      transcript,
+      pageTitle,
+      pageUrl,
+      ollamaHosts: notesConfig.ollamaHosts,
+      ollamaModel: notesConfig.ollamaModel,
+    });
+    const notePath = saveNoteToVault(markdown, { pageTitle, jobId }, notesConfig.vaultPath);
+    broadcast('notes_done', { id: jobId, notePath });
+  } catch (error) {
+    console.warn(`⚠️  Notes generation failed for job ${jobId}: ${error.message}`);
+    broadcast('notes_failed', { id: jobId, error: error.message });
+  }
 }
 
 /**
@@ -728,7 +780,7 @@ wss.on('connection', ws => {
 
     try {
       const parsedMessage = JSON.parse(messageString);
-      const { type, url, data, mimeType, size, originalUrl, element, source, pageUrl, cookies, canonicalId } = parsedMessage;
+      const { type, url, data, mimeType, size, originalUrl, element, source, pageUrl, pageTitle, cookies, canonicalId } = parsedMessage;
       
       if (!type) {
         console.warn('⚠️  Received message without a type');
@@ -944,7 +996,8 @@ wss.on('connection', ws => {
                       wss.clients.forEach(client => {
                         if (client.readyState === WebSocket.OPEN) client.send(resultMessage);
                       });
-                      
+                      generateAndBroadcastNotes(jobId, transcript, pageTitle, pageUrl);
+
                       resolve();
                     } catch (transcribeError) {
                       console.error(`❌ [TRANSCRIBE] Transcription failed for job ${jobId}:`, transcribeError.message);
@@ -1105,6 +1158,7 @@ wss.on('connection', ws => {
                   wss.clients.forEach(client => {
                     if (client.readyState === WebSocket.OPEN) client.send(resultMessage);
                   });
+                  generateAndBroadcastNotes(jobId, transcript, pageTitle, pageUrl);
 
                   // Clean up
                   if (existsSync(localFilePath)) {
@@ -1196,6 +1250,7 @@ wss.on('connection', ws => {
                   wss.clients.forEach(client => {
                     if (client.readyState === WebSocket.OPEN) client.send(resultMessage);
                   });
+                  generateAndBroadcastNotes(jobId, transcript, pageTitle, pageUrl);
 
                   // Clean up
                   if (existsSync(localFilePath)) {

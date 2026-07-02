@@ -104,6 +104,16 @@ function shouldIgnoreUrl(url) {
 }
 
 /**
+ * Detect direct progressive video files (e.g. SCORM-packaged .mp4 assets)
+ * that aren't HLS/DASH manifests. Extension check ignores query strings
+ * like "?v=1".
+ */
+function isDirectVideoFile(url) {
+  const pathOnly = url.toLowerCase().split('?')[0].split('#')[0];
+  return /\.(mp4|m4v|mov|webm)$/.test(pathOnly);
+}
+
+/**
  * Determine stream quality/priority
  * Higher number = higher priority
  */
@@ -558,14 +568,20 @@ chrome.webRequest.onBeforeRequest.addListener(
     const url = details.url;
     const urlLower = url.toLowerCase();
     
-    // Check if URL contains .m3u8 or .mpd (HLS/DASH manifests)
-    if (urlLower.includes('.m3u8') || urlLower.endsWith('.mpd')) {
-      
+    // Check if URL contains .m3u8 or .mpd (HLS/DASH manifests), or is a
+    // direct progressive video file. Some players (e.g. SCORM/Storyline
+    // packages) fetch .mp4 assets via xhr/fetch rather than a native
+    // <video> element load, so this isn't restricted to details.type.
+    const isManifest = urlLower.includes('.m3u8') || urlLower.endsWith('.mpd');
+    const isDirectVideo = isDirectVideoFile(url);
+
+    if (isManifest || isDirectVideo) {
+
       // STEP 1: Apply ignore filters
       if (shouldIgnoreUrl(url)) {
         return; // Filtered out, don't process
       }
-      
+
       console.log('🎯 [FILTER] Valid stream detected:', url.substring(0, 100) + '...');
       
       try {

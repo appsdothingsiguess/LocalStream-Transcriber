@@ -26,6 +26,7 @@ The app uses **[faster-whisper](https://github.com/SYSTRAN/faster-whisper)** (Op
 
 - 🎯 **Local & web-based transcription** — process files from disk or capture from web pages
 - 🌊 **HLS/DASH stream support** — automatically detects and downloads `.m3u8` and `.mpd` streams
+- 🎞️ **Direct video file detection** — also catches plain `.mp4`/`.m4v`/`.mov`/`.webm` requests (e.g. SCORM-packaged lecture assets), not just streaming manifests
 - 🔐 **Authenticated content** — captures session cookies for Canvas, Kaltura, Panopto
 - ⚡ **GPU acceleration** — 4× faster with NVIDIA CUDA; automatic CPU fallback
 - 🌐 **Browser extension** — Chrome extension (Manifest V3) with passive network interception
@@ -228,7 +229,7 @@ Then open **Releases → Draft a new release**, select the tag, add notes, publi
 
 - ❌ **DRM-protected content** — Widevine encryption cannot be bypassed (Netflix, Disney+, etc.)
 - ⚠️ **Cookie expiration** — very long downloads may expire session cookies
-- ⚠️ **Network detection** — page must actively request `.m3u8` or `.mpd` files
+- ⚠️ **Network detection** — page must actively request `.m3u8`/`.mpd` manifests or a direct `.mp4`/`.m4v`/`.mov`/`.webm` file
 
 ---
 
@@ -346,7 +347,7 @@ npm run setup:install
 - Reload the extension in `chrome://extensions/` and try restarting the server.
 
 **"No streams detected"**
-- Open Chrome DevTools → Network tab → filter by `.m3u8` or `.mpd`. If nothing appears, the page is not using HLS/DASH.
+- Open Chrome DevTools → Network tab → filter by `.m3u8`, `.mpd`, or `.mp4`. If nothing appears, the page isn't requesting a recognized stream/video format.
 - Try loading a direct file URL instead.
 
 **"Download succeeded but file not found"**
@@ -472,7 +473,7 @@ Open for contributions. Key areas:
 
 1. **DRM content** — Netflix, Disney+, and similar services use Widevine DRM; this tool cannot bypass it.
 2. **Cookie expiration** — very long downloads on authenticated streams may fail if cookies expire.
-3. **HLS/DASH only** — the browser extension only detects `.m3u8` and `.mpd` requests; plain `<video>` src tags require direct file links.
+3. **Recognized formats only** — the browser extension detects `.m3u8`/`.mpd` manifests and direct `.mp4`/`.m4v`/`.mov`/`.webm` file requests; other formats require manual file download.
 4. **Large files** — files over 2 hours require significant processing time and memory.
 5. **GPU memory** — large models on consumer GPUs may need `compute_type="int8"`.
 

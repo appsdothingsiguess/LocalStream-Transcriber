@@ -2,7 +2,7 @@
 
 ## Overview
 
-A Chrome extension that uses **network sniffing** to detect and capture streaming media (HLS/DASH) from web pages, including authenticated content from Canvas, Kaltura, and Panopto.
+A Chrome extension that uses **network sniffing** to detect and capture streaming media (HLS/DASH) and direct video files (`.mp4`, `.m4v`, `.mov`, `.webm`) from web pages, including authenticated content from Canvas, Kaltura, and Panopto.
 
 ## Architecture
 
@@ -12,7 +12,7 @@ A Chrome extension that uses **network sniffing** to detect and capture streamin
 
 **How it works:**
 1. Extension monitors all network requests in background
-2. Detects `.m3u8` (HLS) and `.mpd` (DASH) manifest requests
+2. Detects `.m3u8` (HLS) and `.mpd` (DASH) manifest requests, plus direct `.mp4`/`.m4v`/`.mov`/`.webm` video file requests (e.g. SCORM-packaged lecture assets)
 3. Extracts session cookies for the domain
 4. Stores the best captured stream candidate locally in the extension
 5. Sends stream URL + cookies to the local relay server only when you explicitly queue it
@@ -22,6 +22,7 @@ A Chrome extension that uses **network sniffing** to detect and capture streamin
 - ✅ Automatic detection without automatic queueing
 - ✅ Handles authenticated content (session cookies)
 - ✅ Supports HLS and DASH streaming protocols
+- ✅ Supports direct progressive video files (`.mp4`, `.m4v`, `.mov`, `.webm`), regardless of whether the page loads them via a `<video>` element or fetch/XHR
 - ✅ Works with any domain (`<all_urls>` permission)
 - ✅ Canonical deduplication prevents duplicate logical jobs
 - ✅ Real-time WebSocket communication
@@ -51,6 +52,7 @@ A Chrome extension that uses **network sniffing** to detect and capture streamin
 - AWS CloudFront signed URLs
 - YouTube HLS streams
 - Any site using `.m3u8` or `.mpd` streams
+- SCORM-packaged courses serving direct `.mp4` assets
 
 ### Manual Queueing
 
@@ -75,7 +77,7 @@ extension/
 
 ### Required Permissions
 
-- **`webRequest`**: Monitors network requests to detect `.m3u8` and `.mpd` files
+- **`webRequest`**: Monitors network requests to detect `.m3u8`/`.mpd` manifests and direct `.mp4`/`.m4v`/`.mov`/`.webm` video files
 - **`cookies`**: Extracts session cookies for authenticated downloads
 - **`storage`**: Stores extension settings (future use)
 
@@ -83,7 +85,7 @@ extension/
 
 - **`<all_urls>`**: Allows extension to monitor requests from any domain
   - Required because streams can come from AWS, CDNs, etc.
-  - **Privacy**: Extension only processes `.m3u8` and `.mpd` requests
+  - **Privacy**: Extension only processes `.m3u8`/`.mpd` manifests and direct video file requests
   - All data stays local (sent to `localhost:8787` only)
 
 ## How It Works
@@ -101,7 +103,7 @@ Network Request: video.m3u8
     ▼
 bg.js: webRequest listener
     │
-    ├─ Check if URL contains .m3u8 or .mpd
+    ├─ Check if URL contains .m3u8/.mpd, or is a direct .mp4/.m4v/.mov/.webm file
     ├─ Extract cookies for domain
     ├─ Capture best candidate locally
     └─ Wait for explicit manual queue action
@@ -190,16 +192,15 @@ npm run setup
 
 ### No streams detected
 
-**Verify page uses HLS/DASH:**
+**Verify page uses a recognized format:**
 1. Open Chrome DevTools → Network tab
 2. Play the video
-3. Filter by `.m3u8` or `.mpd`
-4. If no results, page doesn't use these protocols
+3. Filter by `.m3u8`, `.mpd`, or `.mp4`
+4. If no results, page doesn't use these formats
 
 **Alternative:**
-- Page may use direct file links (MP4, etc.)
-- Backward compatible handlers still exist in relay server
-- Check for blob URLs or direct links
+- Check for blob URLs (use the popup's "select video" option instead)
+- Non-standard formats (e.g. `.mkv`, `.avi` served directly) still require manual download
 
 ### Playback does not queue automatically
 
@@ -285,7 +286,7 @@ npm run setup
 ### Data Collection
 
 **What the extension collects:**
-- Stream URLs (`.m3u8`, `.mpd` only)
+- Stream URLs (`.m3u8`/`.mpd` manifests and direct `.mp4`/`.m4v`/`.mov`/`.webm` files only)
 - Session cookies for those domains
 - Page URL (for context)
 
@@ -306,7 +307,7 @@ npm run setup
 
 | Permission | Why We Need It | What We Do |
 |------------|---------------|------------|
-| `webRequest` | Detect streaming manifests | Monitor `.m3u8`/`.mpd` requests only |
+| `webRequest` | Detect streaming manifests and direct video files | Monitor `.m3u8`/`.mpd`/`.mp4`/`.m4v`/`.mov`/`.webm` requests only |
 | `cookies` | Download authenticated streams | Extract cookies for captured stream domains only |
 | `<all_urls>` | Support any streaming platform | Process only stream-related requests |
 
