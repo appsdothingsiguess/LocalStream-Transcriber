@@ -232,22 +232,23 @@ function loadPythonPathFromConfig() {
 }
 
 /**
- * Load Ollama/Obsidian notes config from config.json. Notes generation is
- * entirely optional — any missing/invalid config just disables the feature
- * rather than failing the transcription job.
+ * Load Ollama/Obsidian notes defaults from config.json. Only OBSIDIAN_NOTES_PATH
+ * is required here — OLLAMA_MODEL/OLLAMA_HOSTS can instead be supplied per-job
+ * by the caller (e.g. the ABS_RBT extension's Ollama Notes Settings), so a
+ * client never has to hand-edit config.json to use its own model/host.
  */
 function loadNotesConfig() {
   try {
     if (!existsSync(CONFIG_FILE)) return null;
     const config = JSON.parse(readFileSync(CONFIG_FILE, 'utf8'));
-    if (!config.OLLAMA_MODEL || !config.OBSIDIAN_NOTES_PATH || config.OLLAMA_MODEL.startsWith('REPLACE_ME')) {
-      return null;
-    }
+    if (!config.OBSIDIAN_NOTES_PATH) return null;
     return {
       ollamaHosts: Array.isArray(config.OLLAMA_HOSTS) && config.OLLAMA_HOSTS.length
         ? config.OLLAMA_HOSTS
         : ['http://localhost:11434'],
-      ollamaModel: config.OLLAMA_MODEL,
+      ollamaModel: (config.OLLAMA_MODEL && !config.OLLAMA_MODEL.startsWith('REPLACE_ME'))
+        ? config.OLLAMA_MODEL
+        : null,
       vaultPath: config.OBSIDIAN_NOTES_PATH,
     };
   } catch (error) {
@@ -261,18 +262,34 @@ function loadNotesConfig() {
  * throws into the caller — failures (Ollama down, bad config) are logged and
  * broadcast as notes_failed, but the transcription job itself already
  * succeeded and must not be affected.
+ *
+ * `overrides` lets a client (e.g. the ABS_RBT extension) supply its own
+ * ollamaModel/ollamaHost/debug per job, taking priority over config.json.
  */
-async function generateAndBroadcastNotes(jobId, transcript, pageTitle, pageUrl) {
+async function generateAndBroadcastNotes(jobId, transcript, pageTitle, pageUrl, overrides = {}) {
   const notesConfig = loadNotesConfig();
-  if (!notesConfig) return; // feature not configured — silently skip
+  if (!notesConfig) return; // OBSIDIAN_NOTES_PATH not configured — silently skip
+
+  const effectiveModel = overrides.ollamaModel || notesConfig.ollamaModel;
+  if (!effectiveModel) {
+    dbg(`Notes skipped for job ${jobId}: no Ollama model configured (config.json or per-job override).`);
+    return;
+  }
+  const effectiveHosts = overrides.ollamaHost
+    ? [overrides.ollamaHost, ...notesConfig.ollamaHosts]
+    : notesConfig.ollamaHosts;
+
+  if (overrides.debug) {
+    console.log(`[DBG] Notes: job ${jobId} using model "${effectiveModel}", hosts: ${effectiveHosts.join(', ')}`);
+  }
 
   try {
     const markdown = await generateNote({
       transcript,
       pageTitle,
       pageUrl,
-      ollamaHosts: notesConfig.ollamaHosts,
-      ollamaModel: notesConfig.ollamaModel,
+      ollamaHosts: effectiveHosts,
+      ollamaModel: effectiveModel,
     });
     const notePath = saveNoteToVault(markdown, { pageTitle, jobId }, notesConfig.vaultPath);
     broadcast('notes_done', { id: jobId, notePath });
@@ -780,7 +797,7 @@ wss.on('connection', ws => {
 
     try {
       const parsedMessage = JSON.parse(messageString);
-      const { type, url, data, mimeType, size, originalUrl, element, source, pageUrl, pageTitle, cookies, canonicalId } = parsedMessage;
+      const { type, url, data, mimeType, size, originalUrl, element, source, pageUrl, pageTitle, cookies, canonicalId, ollamaModel, ollamaHost, debug: notesDebug } = parsedMessage;
       
       if (!type) {
         console.warn('⚠️  Received message without a type');
@@ -996,7 +1013,7 @@ wss.on('connection', ws => {
                       wss.clients.forEach(client => {
                         if (client.readyState === WebSocket.OPEN) client.send(resultMessage);
                       });
-                      generateAndBroadcastNotes(jobId, transcript, pageTitle, pageUrl);
+                      generateAndBroadcastNotes(jobId, transcript, pageTitle, pageUrl, { ollamaModel, ollamaHost, debug: notesDebug });
 
                       resolve();
                     } catch (transcribeError) {
@@ -1158,7 +1175,7 @@ wss.on('connection', ws => {
                   wss.clients.forEach(client => {
                     if (client.readyState === WebSocket.OPEN) client.send(resultMessage);
                   });
-                  generateAndBroadcastNotes(jobId, transcript, pageTitle, pageUrl);
+                  generateAndBroadcastNotes(jobId, transcript, pageTitle, pageUrl, { ollamaModel, ollamaHost, debug: notesDebug });
 
                   // Clean up
                   if (existsSync(localFilePath)) {
@@ -1250,7 +1267,7 @@ wss.on('connection', ws => {
                   wss.clients.forEach(client => {
                     if (client.readyState === WebSocket.OPEN) client.send(resultMessage);
                   });
-                  generateAndBroadcastNotes(jobId, transcript, pageTitle, pageUrl);
+                  generateAndBroadcastNotes(jobId, transcript, pageTitle, pageUrl, { ollamaModel, ollamaHost, debug: notesDebug });
 
                   // Clean up
                   if (existsSync(localFilePath)) {
