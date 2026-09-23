@@ -1317,6 +1317,7 @@ async function transcribeFile() {
       const spawnEnv = { ...process.env, MP3GRABBER_ROOT: ROOT_DIR };
       const spawnCfg = loadConfig();
       if (spawnCfg.WHISPER_MODEL) spawnEnv.WHISPER_MODEL = spawnCfg.WHISPER_MODEL;
+      spawnEnv.WHISPER_TIMESTAMPS = spawnCfg.TIMESTAMPS === false ? '0' : '1';
       if (process.platform === 'win32') {
         spawnEnv.ORT_DISABLE_CPU_AFFINITY = '1';
         spawnEnv.OMP_NUM_THREADS = spawnEnv.OMP_NUM_THREADS || '1';
@@ -1609,12 +1610,14 @@ async function showSettings(gpuStatus) {
     log('\n' + '='.repeat(50), 'bright');
     log('  ⚙️   Settings', 'bright');
     log('='.repeat(50), 'bright');
+    const timestamps = config.TIMESTAMPS !== false;
     log(`  1  Change Whisper model      (current: ${model})`, 'blue');
-    log(`  2  Debug mode info`, 'blue');
-    log('  3  Force reinstall', 'blue');
-    log('  4  Back', 'blue');
+    log(`  2  Timestamps                (current: ${timestamps ? 'on' : 'off'})`, 'blue');
+    log(`  3  Debug mode info`, 'blue');
+    log('  4  Force reinstall', 'blue');
+    log('  5  Back', 'blue');
 
-    const choice = await question('\nEnter your choice (1-4): ');
+    const choice = await question('\nEnter your choice (1-5): ');
 
     switch (choice.trim()) {
       case '1': {
@@ -1625,12 +1628,19 @@ async function showSettings(gpuStatus) {
         log(`✅ Model saved: ${newModel}`, 'green');
         break;
       }
-      case '2':
+      case '2': {
+        const cfg = loadConfig();
+        cfg.TIMESTAMPS = cfg.TIMESTAMPS === false;
+        saveConfig(cfg);
+        log(`✅ Timestamps ${cfg.TIMESTAMPS ? 'on' : 'off'}`, 'green');
+        break;
+      }
+      case '3':
         log('\n💡 Debug mode shows all internal logs.', 'cyan');
         log('   Start with:  npm run setup:debug', 'bright');
         log('   Or set env:  LOCALSTREAM_DEBUG=1', 'cyan');
         break;
-      case '3': {
+      case '4': {
         const cfg = loadConfig();
         cfg.installCompleted = false;
         saveConfig(cfg);
@@ -1640,10 +1650,10 @@ async function showSettings(gpuStatus) {
         process.exit(0);
         break;
       }
-      case '4':
+      case '5':
         return;
       default:
-        log('❌ Invalid choice. Enter 1–4.', 'red');
+        log('❌ Invalid choice. Enter 1–5.', 'red');
     }
   }
 }

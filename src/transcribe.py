@@ -75,7 +75,12 @@ def sidecar_path_for(audio_file, progress=False):
     return os.path.join(os.path.dirname(os.path.abspath(audio_file)), base + suffix)
 
 
+SHOW_TIMESTAMPS = os.environ.get("WHISPER_TIMESTAMPS", "1") != "0"
+
+
 def format_segment_line(segment):
+    if not SHOW_TIMESTAMPS:
+        return f"{segment.text.strip()}\n"
     start_time = segment.start
     start_formatted = f"[{int(start_time // 60):02d}:{start_time % 60:06.3f}]"
     return f"{start_formatted} {segment.text.strip()}\n"

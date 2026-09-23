@@ -6,7 +6,7 @@ export const colors = {
   red:     '\x1b[31m',
   green:   '\x1b[32m',
   yellow:  '\x1b[33m',
-  blue:    '\x1b[34m',
+  blue:    '\x1b[38;2;143;150;201m', // #8f96c9 (24-bit)
   magenta: '\x1b[35m',
   cyan:    '\x1b[36m'
 };

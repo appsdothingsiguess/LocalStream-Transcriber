@@ -460,6 +460,12 @@ async function transcribe(file, forceCPU = false) {
       if (cfg.WHISPER_MODEL) spawnEnv.WHISPER_MODEL = cfg.WHISPER_MODEL;
     } catch (_) {}
   }
+  // Timestamps — read config on every job so a Settings toggle applies without
+  // restarting the relay.
+  try {
+    const cfg = JSON.parse(readFileSync(CONFIG_FILE, 'utf8'));
+    spawnEnv.WHISPER_TIMESTAMPS = cfg.TIMESTAMPS === false ? '0' : '1';
+  } catch (_) {}
   // Windows: reduce ONNX/OpenMP crashes during model load (faster-whisper#1169, #967)
   if (process.platform === 'win32') {
     spawnEnv.ORT_DISABLE_CPU_AFFINITY = '1';
