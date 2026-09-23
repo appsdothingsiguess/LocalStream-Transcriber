@@ -9,4 +9,4 @@ requests>=2.28.0          # Required by faster-whisper (model download, utils)
 # GPU Acceleration (NVIDIA only - CUDA 12)
 # These libraries are required for GPU acceleration with CUDA 12
 nvidia-cublas-cu12
-nvidia-cudnn-cu12==9.*
+nvidia-cudnn-cu12==9.1.0.70   # Must match the cudnn64_9.dll bundled in ctranslate2 4.6 (9.1.0.70)

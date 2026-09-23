@@ -6,10 +6,39 @@ import warnings
 import json
 import time
 from datetime import datetime
+
+# Before importing ctranslate2, so its pkg_resources warning doesn't become the
+# first stderr line that relay.js reports on a crash.
+warnings.filterwarnings("ignore", category=UserWarning)
+
+
+def add_nvidia_dll_dirs():
+    """Expose pip-installed CUDA DLLs (nvidia-cudnn-cu12, nvidia-cublas-cu12).
+
+    ctranslate2 bundles only the cuDNN loader (cudnn64_9.dll); the loader finds
+    cudnn_ops64_9.dll etc. via the normal DLL search, and pip doesn't put
+    site-packages/nvidia/*/bin on it.
+    """
+    if sys.platform != "win32":
+        return
+    import glob
+    import site
+
+    roots = list(site.getsitepackages())
+    try:
+        roots.append(site.getusersitepackages())
+    except Exception:
+        pass
+    for root in roots:
+        for bin_dir in glob.glob(os.path.join(root, "nvidia", "*", "bin")):
+            os.add_dll_directory(bin_dir)
+            os.environ["PATH"] = bin_dir + os.pathsep + os.environ.get("PATH", "")
+
+
+add_nvidia_dll_dirs()
+
 from faster_whisper import WhisperModel
 from faster_whisper.utils import download_model
-
-warnings.filterwarnings("ignore", category=UserWarning)
 
 TRANSCRIBE_SCRIPT_VERSION = 3
 FLUSH_SEGMENTS_EVERY = 1
