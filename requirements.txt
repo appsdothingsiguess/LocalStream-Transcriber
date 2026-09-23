@@ -1,7 +1,7 @@
 # MP3 Grabber Python Dependencies
 
 # Core Dependencies
-faster-whisper==1.0.3     # High-performance Whisper implementation (pinned for stability)
+faster-whisper>=1.1.0     # High-performance Whisper implementation (>=1.1 allows av wheels for Python 3.13)
 yt-dlp>=2023.0.0          # Stream downloader with HLS/DASH support
 numpy>=1.20.0             # Required for faster-whisper and GPU testing
 requests>=2.28.0          # Required by faster-whisper (model download, utils)

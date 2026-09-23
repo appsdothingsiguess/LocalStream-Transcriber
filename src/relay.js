@@ -576,7 +576,7 @@ async function transcribe(file, forceCPU = false) {
         console.error(`   transcribe.py sets ORT_DISABLE_CPU_AFFINITY and OMP_NUM_THREADS to reduce this. If it still fails:`);
         console.error(`   1) Clear the model cache: %USERPROFILE%\\.cache\\huggingface\\hub (then re-run; model will re-download)`);
         console.error(`   2) Run transcribe.py directly to test: python transcribe.py "<path-to-audio>"`);
-        console.error(`   3) Try: pip install faster-whisper==1.0.3 (older version sometimes avoids the crash)`);
+        console.error(`   3) Try reinstalling: pip install --force-reinstall "faster-whisper>=1.1.0" ctranslate2`);
       }
 
       // code === 0 but no RESULT_JSON: try full-buffer recovery (e.g. legacy JSON output)
