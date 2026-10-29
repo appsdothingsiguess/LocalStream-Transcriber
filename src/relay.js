@@ -245,7 +245,7 @@ function loadNotesConfig() {
     return {
       ollamaHosts: Array.isArray(config.OLLAMA_HOSTS) && config.OLLAMA_HOSTS.length
         ? config.OLLAMA_HOSTS
-        : ['http://localhost:11434'],
+        : ['http://localhost:8080'],
       ollamaModel: (config.OLLAMA_MODEL && !config.OLLAMA_MODEL.startsWith('REPLACE_ME'))
         ? config.OLLAMA_MODEL
         : null,
@@ -703,11 +703,24 @@ if (!pythonCmd) {
   dbg(`Python executable ready: ${pythonCmd}`);
 }
 
+// Start llama-swap in WSL2 if it isn't already running.
+// Fire-and-forget: pgrep checks first so a running instance is never double-launched.
+// llama-swap is intentionally left running when the relay shuts down — it's a shared service.
+function ensureLlamaSwapRunning() {
+  console.log('🤖 Ensuring llama-swap is running (WSL2 :8080)…');
+  const proc = spawn('wsl', [
+    'bash', '-c',
+    'pgrep -x llama-swap > /dev/null 2>&1 || (cd ~/llama-swap && nohup ./llama-swap --config ./config.yaml --listen :8080 >> /tmp/llama-swap.log 2>&1 &)'
+  ], { detached: true, stdio: 'ignore' });
+  proc.unref();
+}
+
 const server = app.listen(PORT, () => {
   dbg(`Relay server listening on port ${PORT}`);
   if (!existsSync(UPLOADS_DIR)) mkdirSync(UPLOADS_DIR);
   if (!existsSync(TRANSCRIPTIONS_DIR)) mkdirSync(TRANSCRIPTIONS_DIR);
   if (!existsSync(DOWNLOADS_DIR)) mkdirSync(DOWNLOADS_DIR);
+  ensureLlamaSwapRunning();
 });
 
 // Handle graceful shutdown

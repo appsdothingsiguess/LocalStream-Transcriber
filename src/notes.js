@@ -31,10 +31,10 @@ function sanitizeFilename(name) {
     .slice(0, 120) || 'untitled';
 }
 
-async function pickReachableOllamaHost(hosts) {
+async function pickReachableHost(hosts) {
   for (const host of hosts) {
     try {
-      const res = await fetch(`${host}/api/tags`, { signal: AbortSignal.timeout(2000) });
+      const res = await fetch(`${host}/v1/models`, { signal: AbortSignal.timeout(2000) });
       if (res.ok) return host;
     } catch (_) {
       // try next host
@@ -44,36 +44,36 @@ async function pickReachableOllamaHost(hosts) {
 }
 
 /**
- * Generate structured Markdown notes from a transcript via a local Ollama model.
- * Two-stage design: the model only emits text — this file, not the model,
- * decides where/how to write the file (no MCP tool-calling involved).
+ * Generate structured Markdown notes from a transcript via a local OpenAI-compatible
+ * LLM endpoint (llama-swap → llama-server). Two-stage design: the model only emits
+ * text — this file, not the model, decides where/how to write the file.
  */
 export async function generateNote({ transcript, pageTitle, pageUrl, ollamaHosts, ollamaModel }) {
-  const host = await pickReachableOllamaHost(ollamaHosts);
+  const host = await pickReachableHost(ollamaHosts);
   if (!host) {
-    throw new Error(`No reachable Ollama host among: ${ollamaHosts.join(', ')}`);
+    throw new Error(`No reachable LLM host among: ${ollamaHosts.join(', ')}`);
   }
 
-  dbg(`Generating notes via Ollama at ${host} (model: ${ollamaModel})`);
+  dbg(`Generating notes via ${host} (model: ${ollamaModel})`);
 
-  const res = await fetch(`${host}/api/generate`, {
+  const res = await fetch(`${host}/v1/chat/completions`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       model: ollamaModel,
-      prompt: NOTE_PROMPT_TEMPLATE(transcript, pageTitle || 'Untitled', pageUrl || 'unknown'),
+      messages: [{ role: 'user', content: NOTE_PROMPT_TEMPLATE(transcript, pageTitle || 'Untitled', pageUrl || 'unknown') }],
       stream: false,
     }),
   });
 
   if (!res.ok) {
-    throw new Error(`Ollama request failed: HTTP ${res.status} ${await res.text().catch(() => '')}`);
+    throw new Error(`LLM request failed: HTTP ${res.status} ${await res.text().catch(() => '')}`);
   }
 
   const data = await res.json();
-  const markdown = (data.response || '').trim();
+  const markdown = (data.choices?.[0]?.message?.content || '').trim();
   if (!markdown) {
-    throw new Error('Ollama returned an empty response.');
+    throw new Error('LLM returned an empty response.');
   }
   return markdown;
 }
